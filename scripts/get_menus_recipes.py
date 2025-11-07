@@ -5,6 +5,8 @@ import boto3
 import json
 import time
 import sys
+import xml.etree.ElementTree as ET
+import re
 
 # 이 스크립트는 app 모듈(config)을 사용하므로,
 # 'python -m scripts.get_menus_recipes'로 실행해야 함
@@ -70,8 +72,6 @@ try:
     bedrock_runtime = boto3.client(
         service_name="bedrock-runtime",
         region_name=settings.AWS_DEFAULT_REGION,
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
     )
     MODEL_ID = settings.BEDROCK_MODEL_ID
 except Exception as e:
@@ -114,6 +114,70 @@ def get_recipe_from_bedrock(menu_name, language="Korean"):
         print(f"  [Bedrock 오류] {menu_name} ({language}): {e}")
         return f"<error>Failed to generate recipe: {e}</error>"
 
+def get_description_from_bedrock(menu_name):
+    """Bedrock을 호출하여 음식에 대한 한 줄 설명(영어)을 받아오는 함수"""
+    
+    system_prompt = """You are a food expert. Provide a concise one-sentence description of Korean dishes in English.
+The description should be clear and informative, explaining what the dish is made of.
+Example: For "김밥" (kimbap), you would say: "Seaweed-wrapped rice rolls filled with vegetables, egg, and sometimes meat or tuna."
+Do not include any greetings or extra text. Just provide the description directly."""
+
+    user_query = f"Provide a one-sentence description for {menu_name}."
+
+    try:
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 100,  # 한 줄 설명이므로 짧게
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_query}]
+        })
+
+        response = bedrock_runtime.invoke_model(
+            body=body, modelId=MODEL_ID, contentType='application/json', accept='application/json'
+        )
+        response_body = json.loads(response.get('body').read())
+        description = response_body.get('content')[0].get('text').strip()
+        
+        return description
+    
+    except Exception as e:
+        print(f"  [Bedrock 오류] Description for {menu_name}: {e}")
+        return None
+
+def extract_cook_time_from_recipe(recipe_xml):
+    """recipe XML에서 cook_time(총 예상 시간)을 추출하는 함수"""
+    try:
+        # XML <recipe> 태그 안의 내용만 정확히 추출
+        if '<recipe>' in recipe_xml:
+            recipe_xml = "<recipe>" + recipe_xml.split('<recipe>', 1)[1]
+        if '</recipe>' in recipe_xml:
+            recipe_xml = recipe_xml.split('</recipe>', 1)[0] + "</recipe>"
+        
+        # XML 문자열을 파싱
+        root = ET.fromstring(recipe_xml)
+        
+        # 한국어 버전: "2. 조리 방법 🍳 (총 예상 시간: 20분)"
+        steps_section_title_ko = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
+        if steps_section_title_ko is not None:
+            title_text = steps_section_title_ko.text
+            match = re.search(r'총 예상 시간:\s*(\d+)', title_text)
+            if match:
+                return int(match.group(1))
+        
+        # 영어 버전: "2. Cooking Method 🍳 (Total estimated time: 20 minutes)"
+        steps_section_title_en = root.find(".//section/title[starts-with(., '2. Cooking Method 🍳')]")
+        if steps_section_title_en is not None:
+            title_text = steps_section_title_en.text
+            match = re.search(r'Total estimated time:\s*(\d+)', title_text)
+            if match:
+                return int(match.group(1))
+        
+        return None
+    
+    except Exception as e:
+        print(f"  [Cook time 추출 오류] {e}")
+        return None
+
 # --- 3. 메인 실행 로직 ---
 def enrich_database():
     print(f"'{DB_FILE}'의 'hot_recipes' 테이블 레시피 자동 채우기를 시작합니다.")
@@ -144,13 +208,29 @@ def enrich_database():
         recipe_en = get_recipe_from_bedrock(recipe_name, language="English")
         time.sleep(1)
 
-        # 3. DB에 업데이트
+        # 3. Description 가져오기 (영어로 한 줄 설명)
+        print("  - Description 요청 중...")
+        description = get_description_from_bedrock(recipe_name)
+        time.sleep(1)
+
+        # 4. Cook time 추출 (한글 또는 영어 레시피에서)
+        cook_time = None
+        if recipe_ko and not recipe_ko.startswith("<error>"):
+            cook_time = extract_cook_time_from_recipe(recipe_ko)
+        if cook_time is None and recipe_en and not recipe_en.startswith("<error>"):
+            cook_time = extract_cook_time_from_recipe(recipe_en)
+
+        # 5. DB에 업데이트
         cursor.execute(
-            f"UPDATE {TABLE_NAME} SET recipe_detail_ko = ?, recipe_detail_en = ? WHERE ranking = ?",
-            (recipe_ko, recipe_en, ranking)
+            f"UPDATE {TABLE_NAME} SET recipe_detail_ko = ?, recipe_detail_en = ?, cook_time = ?, description = ? WHERE ranking = ?",
+            (recipe_ko, recipe_en, cook_time, description, ranking)
         )
         conn.commit()
         print(f"  ✅ '{recipe_name}' (Rank {ranking}) DB 업데이트 완료.")
+        if cook_time:
+            print(f"     Cook time: {cook_time}분")
+        if description:
+            print(f"     Description: {description}")
 
     conn.close()
     print("\n--- 모든 레시피 자동 채우기 작업 완료! ---")

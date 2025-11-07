@@ -85,7 +85,9 @@ def create_db_schema(db_path, table_name, data_counter, top_k=15):
             score INTEGER NOT NULL,
             recipe_detail_ko TEXT, 
             recipe_detail_en TEXT,
-            image_url TEXT 
+            image_url TEXT,
+            cook_time INTEGER,
+            description TEXT
         )
         """)
         print(f"'{table_name}' 테이블을 새로 생성합니다.")
