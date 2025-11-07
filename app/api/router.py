@@ -11,12 +11,6 @@ from langchain_core.messages import HumanMessage, AIMessage # LangChain 메시�
 from langchain_core.runnables import RunnableSequence # LangChain 체인 타입 추가
 from app.core.config import settings
 
-# bedrock_service에서 전역 객체를 참조 (Boto3/LangChain)
-llm = bedrock_service.llm 
-retriever = bedrock_service.retriever
-MODEL_ID = bedrock_service.MODEL_ID 
-# -------------------------------------------------------------------
-
 router = APIRouter()
 
 # 🔴 [새로운 Helper 함수 정의] LangChain 스트림 순회를 담당하는 동기 함수
@@ -60,9 +54,13 @@ async def handle_chat_stream(
     """
     (기능 1) LangChain 기반 Bedrock 챗봇 스트리밍 API (Chat History 및 KB 통합)
     """
-    if not llm:
+    try:
+        llm = bedrock_service.get_fresh_llm(settings.AWS_DEFAULT_REGION, settings.BEDROCK_MODEL_ID) 
+        retriever = bedrock_service.get_fresh_retriever()
+    except Exception as e:
+        print(f"[Router Error] Fresh LLM 생성 실패: {e}")
         async def error_stream():
-            yield "<error>LangChain LLM/Bedrock 서비스 초기화 실패. 설정을 확인하세요.</error>"
+            yield "<error>LangChain LLM 초기화 실패 (토큰 문제일 수 있음). 설정을 확인하세요.</error>"
         return StreamingResponse(error_stream(), media_type="text/plain")
 
     language = payload.language

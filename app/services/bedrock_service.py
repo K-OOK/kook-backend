@@ -25,14 +25,6 @@ try:
     
     # 🔴 [retriever]만 LangChain 객체로 유지 (토큰은 요청 시 갱신됨)
     KNOWLEDGE_BASE_ID = settings.KNOWLEDGE_BASE_ID
-    if KNOWLEDGE_BASE_ID:
-        retriever = AmazonKnowledgeBasesRetriever(
-            knowledge_base_id=KNOWLEDGE_BASE_ID,
-            retrieval_config={"vectorSearchConfiguration": {"numberOfResults": 5}},
-            region_name=settings.AWS_DEFAULT_REGION,
-        )
-    else:
-        retriever = None
 
 except Exception as e:
     print(f"[Bedrock_Service] LangChain LLM 또는 Retriever 초기화 실패: {e}")
@@ -54,6 +46,17 @@ def get_fresh_llm(region: str, model_id: str):
             "top_p": 0.6
         },
         streaming=True,
+    )
+
+# 위의 llm과 비슷하게 토큰 만료 방지 위한 함수
+def get_fresh_retriever():
+    """요청 시마다 새로운 Retriever 객체를 생성하여 토큰 만료를 방지"""
+    if not KNOWLEDGE_BASE_ID:
+        return None
+    return AmazonKnowledgeBasesRetriever(
+        knowledge_base_id=KNOWLEDGE_BASE_ID,
+        retrieval_config={"vectorSearchConfiguration": {"numberOfResults": 5}},
+        region_name=settings.AWS_DEFAULT_REGION,
     )
 
 def format_docs(docs):
