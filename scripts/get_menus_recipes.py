@@ -168,7 +168,7 @@ def extract_cook_time_from_recipe(recipe_xml):
         steps_section_title_en = root.find(".//section/title[starts-with(., '2. Cooking Method 🍳')]")
         if steps_section_title_en is not None:
             title_text = steps_section_title_en.text
-            match = re.search(r'Total estimated time:\s*(\d+)', title_text)
+            match = re.search(r'Total Time:\s*(\d+)', title_text)
             if match:
                 return int(match.group(1))
         
@@ -217,8 +217,12 @@ def enrich_database():
         cook_time = None
         if recipe_ko and not recipe_ko.startswith("<error>"):
             cook_time = extract_cook_time_from_recipe(recipe_ko)
+            print(recipe_ko)
+            print(cook_time)
         if cook_time is None and recipe_en and not recipe_en.startswith("<error>"):
             cook_time = extract_cook_time_from_recipe(recipe_en)
+            print(recipe_en)
+            print(cook_time)
 
         # 5. DB에 업데이트
         cursor.execute(
