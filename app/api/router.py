@@ -1,54 +1,55 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.concurrency import run_in_threadpool
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterator
 import boto3
 import json
 from app.schemas.recipe import ChatRequest, ChatResponse, HotRecipe, TopIngredient
 from app.services import bedrock_service, db_service
 from langchain_aws import AmazonKnowledgeBasesRetriever
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.runnables import RunnableSequence
 from app.core.config import settings
-import os
-import sys
 
 # bedrock_service에서 전역 객체를 직접 참조
-bedrock_runtime = bedrock_service.bedrock_runtime
+llm = bedrock_service.llm
 retriever = bedrock_service.retriever
 MODEL_ID = bedrock_service.MODEL_ID # bedrock_service에서 로드된 전역 MODEL_ID 사용
 
 router = APIRouter()
 
-# 🔴 [새로운 Helper 함수 정의] Boto3 호출과 스트림 순회 전체를 담당하는 동기 함수
-def sync_stream_caller(
-    bedrock_runtime: boto3.client,
-    model_id: str,
-    payload_body: Dict[str, Any]
-):
+def lang_chain_stream_caller(
+    chain: RunnableSequence, # LangChain 체인 객체
+    chat_history: List[Dict[str, str]],
+    user_input: str
+) -> Iterator[str]:
     """
-    Boto3 호출부터 EventStream 순회까지 모든 동기 작업을 수행하는 헬퍼 함수.
-    이 함수가 Threadpool에서 실행됩니다.
+    LangChain의 동기 stream() 메서드를 실행하고 텍스트만 yield하는 Helper 함수.
+    run_in_threadpool에 의해 스레드풀에서 실행됩니다.
     """
+    
+    # LangChain Chat History 형식으로 변환 (HumanMessage, AIMessage)
+    lc_chat_history = []
+    for msg in chat_history:
+        if msg['role'] == 'user':
+            lc_chat_history.append(HumanMessage(content=msg['content']))
+        elif msg['role'] == 'assistant':
+            lc_chat_history.append(AIMessage(content=msg['content']))
+
+    # LangChain stream() 실행
     try:
-        # 1. Boto3 호출 (동기)
-        response_stream = bedrock_runtime.invoke_model_with_response_stream(
-            modelId=model_id,
-            body=json.dumps(payload_body, ensure_ascii=False)
-        )
-        
-        # 2. EventStream을 동기 for 루프로 안전하게 순회합니다.
-        for event in response_stream.get("body"):
-            chunk = json.loads(event.get("chunk", {}).get("bytes", "{}"))
-            
-            if chunk.get('type') == 'content_block_delta':
-                text_delta = chunk.get('delta', {}).get('text', '')
-                yield text_delta # 동기 제너레이터로서 청크 반환
-            
-            elif chunk.get('type') == 'message_stop':
-                break
-                
+        for chunk in chain.stream(
+            {
+                "chat_history": lc_chat_history,
+                "input": user_input, 
+            }
+        ):
+            # LangChain chunk 객체에서 content만 추출하여 yield
+            if chunk.content:
+                yield chunk.content
     except Exception as e:
-        print(f"[Bedrock_Service] 동기 스트림 호출 오류: {e}")
-        yield f"<error>Bedrock API 호출 오류 (Threadpool): {e}</error>"
+        print(f"[LangChainStream] 오류 발생: {e}")
+        yield f"<error>스트리밍 중 LangChain 오류 발생: {e}</error>"
 
 
 @router.post("/chat/stream", tags=["Chat"])
@@ -56,21 +57,21 @@ async def handle_chat_stream(
     payload: ChatRequest,
 ):
     """
-    (기능 1) Bedrock 챗봇 스트리밍 API (Chat History 및 KB 포함)
-    - 스트리밍 충돌 문제를 회피하기 위해 동기 헬퍼 함수를 사용합니다.
+    (기능 1) LangChain 기반 Bedrock 챗봇 스트리밍 API (Chat History 및 KB 통합)
     """
-    if not bedrock_runtime:
+    if not bedrock_service.llm: # 🔴 LLM 객체 존재 여부 확인 (bedrock_service에 llm이 있다고 가정)
         async def error_stream():
-            yield "<error>Bedrock client initialization failed. Check setup.</error>"
+            yield "<error>LangChain LLM/Bedrock 서비스 초기화 실패. 설정을 확인하세요.</error>"
         return StreamingResponse(error_stream(), media_type="text/plain")
 
     language = payload.language
     ingredients = payload.ingredients
     chat_history = payload.chat_history or []
-    is_first_message = not chat_history 
+    is_first_message = not chat_history
 
     context_str = ""
-    
+    user_message = ingredients[0] if ingredients else "레시피 추천" # 꼬리 질문/첫 질문 텍스트
+
     # --- 1. KB 검색 (첫 질문일 때만) ---
     if is_first_message and ingredients and retriever:
         ingredient_list = ", ".join(ingredients)
@@ -84,43 +85,38 @@ async def handle_chat_stream(
         except Exception as e:
             print(f"⚠️ [KB] Retriever failed: {e}")
             context_str = "Knowledge Base retrieval failed." if language.lower() == "eng" else "Knowledge Base 검색에 실패했습니다."
-    
-    # --- 2. Bedrock Payload 생성 ---
-    try:
-        # 1. Helper 함수 호출
-        payload_data = bedrock_service.create_bedrock_payload(
-            language=language,
-            ingredients=ingredients,
-            chat_history=chat_history,
-            context_str=context_str,
+            
+        # 첫 질문의 사용자 메시지를 KB 컨텍스트와 함께 재구성
+        user_input_with_context = bedrock_service.create_user_input_with_context(
+            language, base_query, context_str
         )
-        # 2. Payload 분리 (ValidationException 회피)
-        payload_body = payload_data['bedrock_request_body']
-        model_id = payload_data['model_id']
+        # 🔴 LangChain 체인에 전달할 최종 입력 메시지
+        final_input_message = user_input_with_context
+    else:
+        # 꼬리 질문일 경우, payload.ingredients[0] (실제 질문)을 사용
+        final_input_message = user_message
 
-    except Exception as e:
-        error_message = f"Payload 생성 오류: {e}" 
-        async def error_stream():
-            yield f"<error>{error_message}</error>" 
-        return StreamingResponse(error_stream(), media_type="text/plain")
-        
-    # --- 3. Bedrock 스트리밍 API 호출 및 응답 반환 ---
+    # --- 2. LangChain 체인 호출 및 스트리밍 ---
     try:
-        # 🔴 StreamingResponse에 동기 제너레이터(sync_stream_caller)를 전달.
-        #    FastAPI가 이를 Threadpool에서 실행하여 스트리밍을 처리합니다.
-        stream_iterator = sync_stream_caller(
-            bedrock_runtime,
-            model_id,
-            payload_body
+        # LangChain 체인 가져오기 (bedrock_service에 정의되어 있다고 가정)
+        chain = bedrock_service.get_chat_chain(language, final_input_message) # 🔴 체인 생성 함수 호출
+
+        # 🔴 run_in_threadpool로 LangChain 동기 스트림을 실행
+        stream_iterator = await run_in_threadpool(
+            lang_chain_stream_caller,
+            chain,
+            chat_history, # Chat History 전달
+            final_input_message # 최종 사용자 입력 메시지 전달
         )
 
+        # 🔴 StreamingResponse에 동기 제너레이터를 전달
         return StreamingResponse(stream_iterator, media_type="text/plain")
 
     except Exception as e:
-        error_message = f"[Bedrock_Service] Bedrock API 호출 오류: {e}"
+        error_message = f"[LangChain] 치명적인 API 호출 오류: {e}"
         async def error_stream():
             yield f"<error>{error_message}</error>" 
-        return StreamingResponse(error_stream(), media_type="text/plain")        
+        return StreamingResponse(error_stream(), media_type="text/plain")       
 
 @router.get("/hot-recipes", response_model=List[Dict[str, Any]], tags=["Hot Recipes"])
 async def get_hot_recipes():
