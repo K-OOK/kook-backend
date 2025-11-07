@@ -20,7 +20,11 @@ try:
     llm = ChatBedrock(
         model_id=settings.BEDROCK_MODEL_ID,
         region_name=settings.AWS_DEFAULT_REGION,
-        model_kwargs={"max_tokens": 4096}, 
+        model_kwargs={
+            "max_tokens": 4096,
+            "temperature": 0.4,
+            "top-p": 0.7
+            }, 
         streaming=True, 
     )
     bedrock_runtime = None
