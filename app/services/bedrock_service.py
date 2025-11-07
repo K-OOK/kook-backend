@@ -22,7 +22,7 @@ try:
         region_name=settings.AWS_DEFAULT_REGION,
         model_kwargs={
             "max_tokens": 4096,
-            "temperature": 0.4,
+            "temperature": 0.3,
             "top_p": 0.7
             }, 
         streaming=True, 
