@@ -25,37 +25,8 @@ except ModuleNotFoundError:
 DB_FILE = settings.DB_PATH # config에서 DB 경로 가져오기
 TABLE_NAME = 'hot_recipes'
 
-# Bedrock 템플릿 (bedrock_service.py에서 복사)
-# 한국어 버전
-SYSTEM_PROMPT_XML_KO = """
-<template>
-<recipe>
-<title>[ 여기에 요리 제목을 적어주세요 ] (1인분 기준)</title>
-<section><title>1. 재료 🥣</title><ingredients>
-- [재료 1] ([수량 1])
-- [재료 2] ([수량 2])
-</ingredients></section>
-<section><title>2. 조리 방법 🍳 (총 예상 시간: [총 시간]분)</title><steps>
-<step><name>1) [단계 1] (예상 시간: [소요 시간]분)</name><description>
-- [상세 설명 1]
-- [상세 설명 2]
-</description></step>
-<step><name>2) [단계 2] (예상 시간: [소요 시간]분)</name><description>
-- [상세 설명 1]
-</description></step>
-</steps></section>
-<section><title>3. 곁들여 먹으면 좋은 음료 🥂</title><recommendation>
-- [추천 음료 1]
-</recommendation></section>
-<tip><title>💡 셰프의 꿀팁</title><content>
-- [꿀팁 1]
-</content></tip>
-</recipe>
-</template>
-"""
-
-# 영어 버전
-SYSTEM_PROMPT_XML_EN = """
+# Bedrock 템플릿 (영어 메인)
+SYSTEM_PROMPT_XML = """
 <template>
 <recipe>
 <title>[ Write the dish title here ] (for 1 serving)</title>
@@ -87,35 +58,18 @@ SYSTEM_PROMPT_XML_EN = """
 </template>
 """
 
-# 한국어 헤더
-SYSTEM_PROMPT_HEADER_KO = """당신은 "셰프 김(Chef Kim)"이라는 이름을 가진, 외국인에게 K-Food를 알려주는 전문 요리사입니다.
-당신의 임무는 사용자의 요청에 맞춰, K-Food 레시피를 **한국어**로, 그리고 **매우 명확하고 따라하기 쉬운 형식**으로 제공하는 것입니다.
-
-사용자가 요청할 때, 당신은 반드시, 반드시 아래에 제공된 <template> XML 구조를 완벽하게 따라야 합니다.
-<template> 태그 바깥에는 어떠한 인사말이나 잡담도 추가하지 마십시오.
-
-<guidelines>
-- [규칙 1] 반드시 사용자가 제공한 재료를 활용해야 합니다.
-- [규칙 2] "말차 김치", "초콜릿 비빔밥", "민트초코 떡볶이"처럼 맛이 어울리지 않는 터무니없는 레시피는 **절대** 제안해선 안 됩니다.
-- [규칙 3] '고추장 버터 불고기', '김치 치즈 파스타', '콘치즈 닭갈비'처럼 (맛이 검증된) 창의적인 퓨전 요리를 우선적으로 제안하세요.
-- [규칙 4] 모든 응답은 **한국어**로, 그리고 반드시 아래의 <template> XML 구조를 완벽하게 따라야 합니다.
-- [규칙 5] <template> 태그 바깥에는 어떠한 인사말이나 잡담도 추가하지 마십시오.
-</guidelines>
-"""
-
-# 영어 헤더
-SYSTEM_PROMPT_HEADER_EN = """You are "Chef Kim", a professional chef who introduces K-Food to foreigners.
+SYSTEM_PROMPT_HEADER = """You are "Chef Kim", a professional chef who introduces K-Food to foreigners.
 Your mission is to provide K-Food recipes in **English** in a **very clear and easy-to-follow format** based on user requests.
 
-When users make requests, you must strictly follow the <template> XML structure provided below.
-Do not add any greetings or small talk outside the <template> tags.
-
 <guidelines>
-- [Rule 1] You must use the ingredients provided by the user.
-- [Rule 2] You must **never** suggest absurd recipes that don't taste good together, like "matcha kimchi", "chocolate bibimbap", or "mint chocolate tteokbokki".
-- [Rule 3] Prioritize creative fusion dishes with proven flavors like 'gochujang butter bulgogi', 'kimchi cheese pasta', or 'corn cheese dakgalbi'.
-- [Rule 4] All responses must be in **English** and must strictly follow the <template> XML structure below.
-- [Rule 5] Do not add any greetings or small talk outside the <template> tags.
+1.  **Ingredient Usage (MANDATORY):** You MUST utilize the ingredients provided by the user in your recipe suggestions.
+2.  **Taste Validation (STRICTLY FORBIDDEN):** NEVER suggest absurd or unpalatable combinations (e.g., "Matcha Kimchi", "Chocolate Bibimbap", "Mint Chocolate Tteokbokki"). All recipes must be culinarily sound.
+3.  **Prioritize Proven Fusion:** Focus on creative but validated flavor profiles.
+    * *Good Examples:* Gochujang Butter Bulgogi, Kimchi Cheese Pasta, Corn Cheese Dakgalbi.
+4.  **Language:** All responses must be in **ENGLISH**.
+5.  **Output Format:**
+    * Your entire response must be strictly contained within the <template> XML structure provided below.
+    * DO NOT include any introductory text, greetings, or small talk outside the XML tags.
 </guidelines>
 """
 
@@ -130,15 +84,18 @@ except Exception as e:
     print(f"Boto3 클라이언트 초기화 실패: {e}")
     sys.exit(1)
 
-def get_recipe_from_bedrock(menu_name, language="Korean"):
-    """Bedrock을 호출하여 XML 레시피를 받아오는 (동기) 함수"""
-    
-    if language == "English":
-        user_query = f"Provide a recipe for {menu_name}."
-        system_prompt = f"{SYSTEM_PROMPT_HEADER_EN}\n{SYSTEM_PROMPT_XML_EN}"
-    else: # 기본값 (Korean)
-        user_query = f"{menu_name} 레시피 알려줘."
-        system_prompt = f"{SYSTEM_PROMPT_HEADER_KO}\n{SYSTEM_PROMPT_XML_KO}"
+def _extract_recipe_xml(text):
+    """응답 텍스트에서 <recipe> 태그만 깔끔하게 추출하는 헬퍼 함수"""
+    if '<recipe>' in text:
+        text = "<recipe>" + text.split('<recipe>', 1)[1]
+    if '</recipe>' in text:
+        text = text.split('</recipe>', 1)[0] + "</recipe>"
+    return text
+
+def get_recipe_from_bedrock(menu_name):
+    """Bedrock을 호출하여 영어 XML 레시피를 받아오는 함수"""
+    user_query = f"Provide a recipe for {menu_name}."
+    system_prompt = f"{SYSTEM_PROMPT_HEADER}\n{SYSTEM_PROMPT_XML}"
 
     try:
         body = json.dumps({
@@ -153,18 +110,42 @@ def get_recipe_from_bedrock(menu_name, language="Korean"):
         )
         response_body = json.loads(response.get('body').read())
         answer = response_body.get('content')[0].get('text')
-
-        # <recipe> 태그만 깔끔하게 추출
-        if '<recipe>' in answer:
-            answer = "<recipe>" + answer.split('<recipe>', 1)[1]
-        if '</recipe>' in answer:
-            answer = answer.split('</recipe>', 1)[0] + "</recipe>"
         
-        return answer
+        return _extract_recipe_xml(answer)
     
     except Exception as e:
-        print(f"  [Bedrock 오류] {menu_name} ({language}): {e}")
+        print(f"  [Bedrock 오류] {menu_name}: {e}")
         return f"<error>Failed to generate recipe: {e}</error>"
+
+def translate_recipe_to_korean(recipe_xml_en):
+    """영어 레시피 XML을 한글로 번역하는 함수"""
+    system_prompt = """You are a professional translator specializing in Korean food recipes.
+Your task is to translate the provided English recipe XML into Korean, maintaining the exact same XML structure and format.
+Translate all content including titles, ingredients, steps, recommendations, and tips.
+Keep the XML tags and structure exactly the same - only translate the text content.
+Do not add any greetings or extra text. Just provide the translated XML directly."""
+
+    user_query = f"Translate the following recipe XML from English to Korean, maintaining the exact XML structure:\n\n{recipe_xml_en}"
+
+    try:
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 2048,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_query}]
+        })
+
+        response = bedrock_runtime.invoke_model(
+            body=body, modelId=MODEL_ID, contentType='application/json', accept='application/json'
+        )
+        response_body = json.loads(response.get('body').read())
+        translated_xml = response_body.get('content')[0].get('text').strip()
+        
+        return _extract_recipe_xml(translated_xml)
+    
+    except Exception as e:
+        print(f"  [Bedrock 오류] Translation: {e}")
+        return None
 
 def get_description_from_bedrock(menu_name):
     """Bedrock을 호출하여 음식에 대한 한 줄 설명(영어)을 받아오는 함수"""
@@ -197,31 +178,17 @@ Do not include any greetings or extra text. Just provide the description directl
         return None
 
 def extract_cook_time_from_recipe(recipe_xml):
-    """recipe XML에서 cook_time(총 예상 시간)을 추출하는 함수"""
+    """영어 recipe XML에서 cook_time(Total estimated time)을 추출하는 함수"""
     try:
-        # XML <recipe> 태그 안의 내용만 정확히 추출
-        if '<recipe>' in recipe_xml:
-            recipe_xml = "<recipe>" + recipe_xml.split('<recipe>', 1)[1]
-        if '</recipe>' in recipe_xml:
-            recipe_xml = recipe_xml.split('</recipe>', 1)[0] + "</recipe>"
+        root = ET.fromstring(_extract_recipe_xml(recipe_xml))
         
-        # XML 문자열을 파싱
-        root = ET.fromstring(recipe_xml)
-
-        # 한국어 또는 영어 버전 모두 찾기
         for title in root.findall("./section/title"):
             if title.text:
-                # 한국어 버전: "총 예상 시간: XX분"
-                match_ko = re.search(r'총 예상 시간:\s*(\d+)분', title.text)
-                if match_ko:
-                    return int(match_ko.group(1))
-                
-                # 영어 버전: "Total estimated time: XX minutes" 또는 "Total Time: XX minutes"
-                match_en = re.search(r'Total estimated time:\s*(\d+)\s*minutes?', title.text) or \
-                          re.search(r'Total Time:\s*(\d+)\s*minutes?', title.text)
-                if match_en:
-                    return int(match_en.group(1))
-        
+                match = re.search(r'Total estimated time:\s*(\d+)\s*minutes?', title.text) or \
+                       re.search(r'Total Time:\s*(\d+)\s*minutes?', title.text)
+                if match:
+                    return int(match.group(1))
+
         return None
     
     except Exception as e:
@@ -248,26 +215,33 @@ def enrich_database():
     for ranking, recipe_name in tasks:
         print(f"\n[작업 {ranking}/{len(tasks)}] '{recipe_name}' 레시피 가져오는 중...")
         
-        # 1. 한글 레시피 가져오기
-        print("  - 한글(KO) 레시피 요청 중...")
-        recipe_ko = get_recipe_from_bedrock(recipe_name, language="Korean")
-        time.sleep(1) # Bedrock API 속도 제한 방지
-
-        # 2. 영어 레시피 가져오기
+        # 1. 영어 레시피 가져오기 (메인)
         print("  - 영어(EN) 레시피 요청 중...")
-        recipe_en = get_recipe_from_bedrock(recipe_name, language="English")
-        time.sleep(1)
+        recipe_en = get_recipe_from_bedrock(recipe_name)
+        time.sleep(1) # Bedrock API 속도 제한 방지
+        
+        if recipe_en and not recipe_en.startswith("<error>"):
+            # 2. 영어 레시피를 한글로 번역
+            print("  - 한글(KO) 번역 중...")
+            recipe_ko = translate_recipe_to_korean(recipe_en)
+            time.sleep(1)
+            
+            # 번역 실패 시 None으로 설정
+            if not recipe_ko or recipe_ko.startswith("<error>"):
+                recipe_ko = None
+                print("  ⚠️  번역 실패 - 한글 레시피를 건너뜁니다.")
+        else:
+            recipe_ko = None
+            print("  ⚠️  영어 레시피 생성 실패 - 한글 레시피를 건너뜁니다.")
 
         # 3. Description 가져오기 (영어로 한 줄 설명)
         print("  - Description 요청 중...")
         description = get_description_from_bedrock(recipe_name)
         time.sleep(1)
 
-        # 4. Cook time 추출 (한글 또는 영어 레시피에서)
+        # 4. Cook time 추출 (영어 레시피에서)
         cook_time = None
-        if recipe_ko and not recipe_ko.startswith("<error>"):
-            cook_time = extract_cook_time_from_recipe(recipe_ko)
-        if cook_time is None and recipe_en and not recipe_en.startswith("<error>"):
+        if recipe_en and not recipe_en.startswith("<error>"):
             cook_time = extract_cook_time_from_recipe(recipe_en)
 
         # 5. DB에 업데이트

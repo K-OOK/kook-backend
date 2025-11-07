@@ -13,7 +13,7 @@ BASE_STOPWORDS_SET = {
     'he', 'him', 'his', 'she', 'her', 'it', 'its', 'they', 'them', 'their',
     'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is',
     'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having',
-    'do', 'does', 'did', 'doing', 'but', 'if',
+    'do', 'does', 'did', 'doing', 'but', 'if', 'friend',
     'because', 'as', 'until', 'while','about', 'or', 'from', 'out',
     'any', 'some', 'my', 'korean', 'food', 'try', 'park', 'hello', 'hi',
     'recipe', 's', 't', 'm', 'what', 'on', 'in', 'at', 'by', 'for', 'with', 'about', 'of',
