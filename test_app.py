@@ -54,6 +54,8 @@ if len(APP_ARGS) >= 2:
 elif len(APP_ARGS) > 0:
     print(f"⚠️ [인자 오류] 최소 2개의 인자가 필요합니다 (language, ingredient1). 현재 인자 개수: {len(APP_ARGS)}")
 
+print(f"[Streamlit] PARSED_ARGS: {PARSED_ARGS}")
+
 # 1. .env 파일 로드
 load_dotenv()
 
@@ -498,9 +500,15 @@ with chat_container:
 if "auto_sent" not in st.session_state:
     st.session_state.auto_sent = False
 
-if (not st.session_state.auto_sent and 
+# 자동 메시지 생성 조건 확인
+should_auto_send = (
+    not st.session_state.auto_sent and 
     st.session_state.initial_ingredients and 
-    len(st.session_state.chat_history) == 0):
+    len(st.session_state.initial_ingredients) > 0 and
+    len(st.session_state.chat_history) == 0
+)
+
+if should_auto_send and bedrock_runtime:
     # 자동으로 첫 메시지 생성
     ingredients_str = ", ".join(st.session_state.initial_ingredients)
     if st.session_state.language == "eng":
@@ -508,23 +516,25 @@ if (not st.session_state.auto_sent and
     else:
         auto_message = f"내가 가진 재료: {ingredients_str}로 K-Food 레시피를 만들어주세요."
     
+    print(f"[자동 메시지] 생성 중: {auto_message}")
+    
     # 자동 메시지 처리
-    if bedrock_runtime:
-        is_first = True
-        with st.spinner("생성 중..."):
-            assistant_response, kb_context = generate_chat_response(
-                auto_message,
-                st.session_state.language,
-                [],
-                is_first_message=is_first
-            )
-            
-            st.session_state.chat_history.append({"role": "user", "content": auto_message})
-            if kb_context:
-                st.session_state.kb_context = kb_context
-            st.session_state.chat_history.append(assistant_response)
-            st.session_state.auto_sent = True
-        st.rerun()
+    is_first = True
+    assistant_response, kb_context = generate_chat_response(
+        auto_message,
+        st.session_state.language,
+        [],
+        is_first_message=is_first
+    )
+    
+    st.session_state.chat_history.append({"role": "user", "content": auto_message})
+    if kb_context:
+        st.session_state.kb_context = kb_context
+    st.session_state.chat_history.append(assistant_response)
+    st.session_state.auto_sent = True
+    
+    print(f"[자동 메시지] 완료. 대화 기록 개수: {len(st.session_state.chat_history)}")
+    st.rerun()
 
 # 사용자 입력
 user_input = st.chat_input("메시지를 입력하세요...")
