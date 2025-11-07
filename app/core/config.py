@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     REDDIT_PASSWORD: str
     REDDIT_USER_AGENT: str
     REDDIT_USERNAME: str
-
+    
     KNOWLEDGE_BASE_ID: str
 
     # DB 파일 경로

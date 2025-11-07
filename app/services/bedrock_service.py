@@ -85,7 +85,6 @@ def format_docs(docs):
 def _get_system_prompt(language: str) -> str:
     """
     language에 따라 한국어 또는 영어 시스템 프롬프트를 반환
-    (이 함수는 수정 사항 없음)
     """
     if language.lower() == "eng":
         return """You are "Chef Kim", a professional chef who introduces K-Food to foreigners.
@@ -107,6 +106,8 @@ Do not add any greetings or small talk outside the <template> tags.
 - [Rule 4] **[Format] Output:** The response MUST be in **English** and MUST strictly adhere to the provided `<template>` XML structure.
 
 - [Rule 5] **[Constraint] No Chatter:** DO NOT add any text (greetings, explanations, etc.) outside the `<template>` tags.
+
+- [Rule 6] **[Format-Ingredients] Ingredient Format:** All ingredients in the <ingredients> section MUST strictly follow the "Ingredient Name (Quantity)" format. (e.g., Sesame oil (1 tablespoon))
 </guidelines>
 
 <template>
@@ -187,6 +188,8 @@ Do not add any greetings or small talk outside the <template> tags.
 - [규칙 4] **[Format] 출력 형식:** 응답은 **반드시 한국어**로, 제공된 `<template>` XML 구조를 완벽하게 준수해야 합니다.
 
 - [규칙 5] **[Constraint] 잡담 금지:** `<template>` 태그 외부에 어떤 텍스트(인사, 설명 등)도 추가하지 마십시오.
+
+- [규칙 6] **[Format-Ingredients] 재료 형식:** <ingredients> 섹션의 모든 재료는 "재료명 (수량)" 형식을 엄격하게 따라야 합니다. (예: 간장 (2큰술))
 </guidelines>
 
 <template>
