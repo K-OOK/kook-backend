@@ -57,12 +57,18 @@ async def handle_chat_stream(
     # --- 2. Bedrock Payload 생성 ---
     # KB 컨텍스트와 Chat History를 포함한 최종 payload 생성
     try:
-        payload_body = bedrock_service.create_bedrock_payload(
+        # 1. Helper 함수 호출
+        payload_data = bedrock_service.create_bedrock_payload(
             language=language,
             ingredients=ingredients,
             chat_history=chat_history,
             context_str=context_str,
         )
+        
+        # 🔴 2. Payload 분리: Boto3 호출에 필요한 두 인자를 추출
+        payload_body = payload_data['bedrock_request_body']
+        model_id = payload_data['model_id']
+
     except Exception as e:
         error_message = f"Payload 생성 오류: {e}" 
         
@@ -75,8 +81,8 @@ async def handle_chat_stream(
     try:
         response_stream = await run_in_threadpool(
             bedrock_runtime.invoke_model_with_response_stream,
-            modelId=BEDROCK_MODEL_ID,
-            body=json.dumps(payload_body)
+            modelId=model_id, # 🔴 분리된 model_id 사용
+            body=json.dumps(payload_body) # 🔴 분리된 request_body 사용
         )
 
         # --- 4. 비동기 제너레이터 (스트리밍 응답 반환) ---

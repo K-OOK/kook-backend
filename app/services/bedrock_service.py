@@ -290,7 +290,6 @@ User Request: {base_query}""" if is_english else f"""KB 참고 자료입니다:
     messages.extend(chat_history)
     messages.append({"role": "user", "content": user_message})
 
-    # 최종 Payload
     body = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": 4096,
@@ -299,4 +298,10 @@ User Request: {base_query}""" if is_english else f"""KB 참고 자료입니다:
         "stream": True,
     }
 
-    return body
+    # 🔴 router.py로 Model ID와 Body를 함께 보내기 위해 딕셔너리 반환 구조 변경
+    final_output = {
+        "bedrock_request_body": body, # ⬅️ 이 키가 실제 요청 본문임
+        "model_id": MODEL_ID 
+    }
+
+    return final_output
