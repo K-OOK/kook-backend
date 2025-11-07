@@ -118,6 +118,14 @@ async def get_hot_recipes():
     recipes = await db_service.get_hot_recipes_from_db(limit=15)
     return recipes
 
+@router.get("/hot-recipes/all", response_model=List[Dict[str, Any]], tags=["Hot Recipes"])
+async def get_hot_recipes():
+    """
+    secret API: DB에 저장된 모든 메뉴를 조회
+    """
+    recipes = await db_service.get_all_recipes_from_db()
+    return recipes
+
 @router.get("/hot-recipes/detail", response_model=Dict[str, Any], tags=["Hot Recipes"])
 async def get_hot_recipes_detail(ranking: int):
     """

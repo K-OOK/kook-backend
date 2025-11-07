@@ -39,6 +39,27 @@ async def get_hot_recipes_from_db(limit: int = 15) -> List[Dict[str, Any]]:
         print(f"DB 오류: {e}. 'scripts/extract_hot_menus.py'를 실행했는지 확인하세요.")
         return [] # DB나 테이블이 없으면 빈 리스트 반환
 
+async def get_all_recipes_from_db() -> List[Dict[str, Any]]:
+    """
+    secret API: DB에 저장된 모든 메뉴를 조회
+    """
+    print(f"DB: 'hot_recipes' 테이블에서 모든 메뉴 조회 중...")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ranking, recipe_name, image_url, cook_time, description, recipe_detail_ko, recipe_detail_en
+            FROM hot_recipes
+            """
+        )
+        recipes = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in recipes]
+    except sqlite3.OperationalError as e:
+        print(f"DB 오류: {e}. 'scripts/get_menus_recipes.py'를 실행했는지 확인하세요.")
+        return []
+
 async def get_hot_recipes_detail_from_db(ranking: int) -> Dict[str, Any]:
     """
     (기능 2) Hot K-Food 추천 API
