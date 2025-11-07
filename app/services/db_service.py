@@ -98,7 +98,7 @@ async def get_top_ingredients_from_db(limit: int = 10) -> List[Dict[str, Any]]:
         # Rank, Name, Quantity 조회
         cursor.execute(
             """
-            SELECT IngredientRank, ProductName, TotalQuantity 
+            SELECT IngredientRank, IngredientName, TotalQuantity 
             FROM grocery_sales 
             ORDER BY IngredientRank ASC 
             LIMIT 10
@@ -111,7 +111,7 @@ async def get_top_ingredients_from_db(limit: int = 10) -> List[Dict[str, Any]]:
         return [
             {
                 "ranking": row["IngredientRank"],
-                "ingredient_name": row["ProductName"],
+                "ingredient_name": row["IngredientName"],
                 "total_quantity": row["TotalQuantity"]
             } 
             for row in ingredients

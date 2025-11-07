@@ -58,11 +58,68 @@ def analyze_sales(data):
     )
     print("✅ (1/3) 'Sales'와 'Products' 병합 완료.")
 
-    # --- Cell 3: 상품별 총 판매량 집계 ---
-    product_summary = merged_df.groupby(['ProductID', 'ProductName']).agg(
+    # --- 카테고리 정보 병합 (음식 필터링용) ---
+    merged_df_with_category = pd.merge(
+        merged_df,
+        data['categories'],
+        on='CategoryID',
+        how='left'
+    )
+    
+    # 음식이 아닌 카테고리/제품명 필터링
+    # 음식이 아닌 카테고리 키워드 목록
+    NON_FOOD_CATEGORIES = [
+        'towels', 'towel', 'cleaning', 'household', 'bath', 'kitchenware',
+        'appliance', 'electronics', 'furniture', 'clothing', 'textile'
+    ]
+    
+    # 음식이 아닌 제품명 키워드 목록
+    NON_FOOD_KEYWORDS = [
+        'towel', 'towels', 'cleaning', 'detergent', 'soap', 'shampoo',
+        'toothpaste', 'brush', 'sponge', 'tissue', 'napkin', 'paper', 'table'
+    ]
+    
+    # 카테고리명이 음식이 아닌 경우 필터링
+    if 'CategoryName' in merged_df_with_category.columns:
+        merged_df_with_category = merged_df_with_category[
+            ~merged_df_with_category['CategoryName'].str.lower().str.contains(
+                '|'.join(NON_FOOD_CATEGORIES), na=False, case=False
+            )
+        ]
+    
+    # 제품명이 음식이 아닌 경우 필터링
+    if 'ProductName' in merged_df_with_category.columns:
+        merged_df_with_category = merged_df_with_category[
+            ~merged_df_with_category['ProductName'].str.lower().str.contains(
+                '|'.join(NON_FOOD_KEYWORDS), na=False, case=False
+            )
+        ]
+    
+    print(f"✅ 음식이 아닌 항목 필터링 완료. (남은 행 수: {len(merged_df_with_category)})")
+
+    # --- ProductName 정제: "-" 이전 부분만 추출 ---
+    def extract_ingredient_name(product_name):
+        """ProductName에서 재료명만 추출 (예: "Bread - Calabrese Baguette" -> "Bread")"""
+        if pd.isna(product_name):
+            return product_name
+        product_name_str = str(product_name)
+        if ' - ' in product_name_str:
+            return product_name_str.split(' - ')[0].strip()
+        return product_name_str.strip()
+    
+    merged_df_with_category['IngredientName'] = merged_df_with_category['ProductName'].apply(
+        extract_ingredient_name
+    )
+    
+    print("✅ ProductName 정제 완료 (IngredientName 컬럼 생성).")
+
+    # --- Cell 3: 상품별 총 판매량 집계 (IngredientName 기준으로 그룹화) ---
+    # IngredientName으로 그룹화하여 동일한 재료명을 가진 제품들을 합침
+    product_summary = merged_df_with_category.groupby(['IngredientName']).agg(
         TotalQuantity=('Quantity', 'sum'),  # 총 판매량
         TotalRevenue=('TotalPrice', 'sum'),   # 총 매출액
-        SalesCount=('SalesID', 'count')     # 총 판매 횟수
+        SalesCount=('SalesID', 'count'),     # 총 판매 횟수
+        ProductName=('ProductName', 'first')  # 첫 번째 ProductName 유지 (참고용)
     )
     
     # 'TotalQuantity'(총 판매량)을 기준으로 내림차순 정렬
@@ -79,14 +136,7 @@ def analyze_sales(data):
     print(product_summary_sorted.head(10))
 
     # --- Cell 4: 카테고리별 판매 현황 ---
-    full_summary_df = pd.merge(
-        merged_df, 
-        data['categories'], 
-        on='CategoryID', 
-        how='left'
-    )
-    
-    category_summary = full_summary_df.groupby('CategoryName').agg(
+    category_summary = merged_df_with_category.groupby('CategoryName').agg(
         TotalQuantity=('Quantity', 'sum'),
         TotalRevenue=('TotalPrice', 'sum')
     )
