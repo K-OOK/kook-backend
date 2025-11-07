@@ -287,86 +287,70 @@ def _parse_recipe_xml_for_preview(xml_string: str, language: str = "kor") -> Opt
         return None
 
 
-async def generate_recipe_response(language: str, ingredients: list = None):
+def generate_chat_response(user_message: str, language: str, chat_history: List[dict] = None, is_first_message: bool = False):
     """
-    제공한 코드와 동일 (ChatResponse 스키마만 dataclass로 대체)
-    (수정) Streamlit 디버깅을 위해 (ChatResponse, context_str, full_query)를 반환
+    챗봇 형태로 대화를 생성하는 함수
+    chat_history: 이전 대화 기록 [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+    is_first_message: 첫 번째 메시지인지 여부 (KB 검색 여부 결정)
     """
     if not bedrock_runtime:
         error_msg = "Bedrock service is not initialized."
         if language.lower() != "eng":
             error_msg = "Bedrock service가 초기화되지 않았습니다."
-        error_xml = f"<error>{error_msg}</error>"
-        # (수정) 디버그 정보와 함께 반환
-        return ChatResponse(full_recipe=error_xml, preview=None), "N/A", "N/A"
+        return {"role": "assistant", "content": f"<error>{error_msg}</error>"}, "N/A"
 
     system_prompt = _get_system_prompt(language)
     is_english = language.lower() == "eng"
     
-    if ingredients:
-        ingredient_list = ", ".join(ingredients)
-        if is_english:
-            base_query = f"K-Food recipe using these ingredients: [{ingredient_list}]"
-            user_query = f"Please create a K-Food recipe using these ingredients: [{ingredient_list}]"
-        else:
-            base_query = f"재료: [{ingredient_list}]를 사용한 K-Food 레시피"
-            user_query = f"내가 가진 재료: [{ingredient_list}]로 K-Food 레시피를 만들어주세요."
-    else:
-        if is_english:
-            base_query = "K-Food recipe"
-            user_query = "Please create a K-Food recipe."
-        else:
-            base_query = "K-Food 레시피"
-            user_query = "K-Food 레시피를 만들어주세요."
-
+    # 첫 번째 메시지이고 재료가 포함된 경우에만 KB 검색
     context_str = ""
-    if retriever:
+    if is_first_message and retriever:
         try:
+            # 재료 추출 시도
+            base_query = user_message if is_english else f"K-Food recipe: {user_message}"
             print(f"🔍 [KB] Retrieving for query: {base_query}")
-            # Streamlit은 동기적이므로, retriever.invoke (동기 함수)를 그대로 사용
             retrieved_docs = retriever.invoke(base_query)
             context_str = format_docs(retrieved_docs)
         except Exception as e:
             print(f"⚠️ [KB] Retriever failed: {e}")
             context_str = "Knowledge Base retrieval failed." if is_english else "Knowledge Base 검색에 실패했습니다."
-    else:
-        print("⚠️ [KB] Retriever is not initialized. Skipping KB search.")
     
-    full_query = ""
-    if context_str:
+    # 메시지 구성
+    messages = []
+    if chat_history:
+        messages.extend(chat_history)
+    
+    # 현재 사용자 메시지에 컨텍스트 추가 (첫 번째 메시지이고 컨텍스트가 있는 경우만)
+    if is_first_message and context_str:
         if is_english:
-            full_query = f"""Here is some context from the knowledge base. Use this information to create the recipe:
+            full_user_message = f"""Here is some context from the knowledge base. Use this information to create the recipe:
 <context>
 {context_str}
 </context>
 
-User Request: {user_query}
+User Request: {user_message}
 """
         else:
-            full_query = f"""Knowledge Base에서 검색된 참고 자료입니다. 이 정보를 활용해서 레시피를 만들어주세요:
+            full_user_message = f"""Knowledge Base에서 검색된 참고 자료입니다. 이 정보를 활용해서 레시피를 만들어주세요:
 <context>
 {context_str}
 </context>
 
-사용자 요청: {user_query}
+사용자 요청: {user_message}
 """
     else:
-        full_query = user_query 
+        full_user_message = user_message
+    
+    messages.append({"role": "user", "content": full_user_message})
 
     try:
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096, # 테스트를 위해 넉넉하게
+            "max_tokens": 4096,
             "system": system_prompt,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": full_query
-                }
-            ]
+            "messages": messages
         })
 
-        # Boto3는 동기 함수이므로 그대로 호출
         response = bedrock_runtime.invoke_model(
             modelId=MODEL_ID,
             body=body
@@ -374,17 +358,13 @@ User Request: {user_query}
 
         response_body = json.loads(response.get('body').read())
         
-        # 'content'가 리스트가 아닐 경우 대비
         content_list = response_body.get('content', [])
         if content_list and isinstance(content_list, list) and 'text' in content_list[0]:
-             full_recipe_xml = content_list[0].get('text')
+            assistant_message = content_list[0].get('text')
         else:
-            full_recipe_xml = f"<error>Unexpected model response format: {response_body}</error>"
+            assistant_message = f"<error>Unexpected model response format: {response_body}</error>"
 
-        preview_info = _parse_recipe_xml_for_preview(full_recipe_xml, language)
-        
-        # (수정) 디버그 정보와 함께 반환
-        return ChatResponse(full_recipe=full_recipe_xml, preview=preview_info), context_str, full_query
+        return {"role": "assistant", "content": assistant_message}, context_str
 
     except Exception as e:
         print(f"[Bedrock_Service] Bedrock API 호출 오류: {e}")
@@ -392,86 +372,101 @@ User Request: {user_query}
         if language.lower() != "eng":
             error_msg = f"레시피 생성 중 오류: {e}"
         
-        # (수정) 디버그 정보와 함께 반환
-        return ChatResponse(full_recipe=f"<error>{error_msg}</error>", preview=None), context_str, full_query
+        return {"role": "assistant", "content": f"<error>{error_msg}</error>"}, context_str
 
 # --- [2] Streamlit UI 부분 ---
 
-st.set_page_config(layout="wide")
-st.title("🧑‍🍳 '셰프 김' 레시피 봇 테스트")
-st.caption("제공한 프롬프트, KB, Boto3 모델을 테스트합니다.")
+st.set_page_config(layout="wide", page_title="셰프 김 챗봇")
 
-# --- 사이드바 (입력) ---
+# 세션 상태 초기화
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "language" not in st.session_state:
+    st.session_state.language = "eng"
+if "kb_context" not in st.session_state:
+    st.session_state.kb_context = ""
+
+# --- 사이드바 ---
 with st.sidebar:
-    st.header("⚙️ 테스트 설정")
+    st.header("⚙️ 설정")
     
     # .env 로드 상태 표시
-    st.subheader("환경 변수 로드 상태")
+    st.subheader("환경 변수")
     st.info(f"**Region:** `{AWS_DEFAULT_REGION}`")
     st.info(f"**Model ID:** `{BEDROCK_MODEL_ID}`")
     if KNOWLEDGE_BASE_ID:
-        st.success(f"**KB ID:** `{KNOWLEDGE_BASE_ID}` (로드됨)")
+        st.success(f"**KB ID:** `{KNOWLEDGE_BASE_ID}` ✅")
     else:
         st.warning("**KB ID:** `None` (KB 검색 비활성화)")
     
     st.divider()
-
-    # 테스트 입력
-    language = st.selectbox("언어 (Language)", ["kor", "eng"])
-    ingredients_input = st.text_area("재료 (쉼표로 구분)", "돼지고기, 김치, 양파")
     
-    run_button = st.button("🚀 레시피 생성 테스트", type="primary")
+    # 언어 설정
+    st.session_state.language = st.selectbox("언어 (Language)", ["eng", "kor"], index=0)
+    
+    st.divider()
+    
+    # 대화 초기화 버튼
+    if st.button("🗑️ 대화 초기화", type="secondary"):
+        st.session_state.chat_history = []
+        st.session_state.kb_context = ""
+        st.rerun()
 
-# --- 메인 화면 (출력) ---
-if run_button:
+# --- 메인 화면 ---
+st.title("🧑‍🍳 '셰프 김' 레시피 챗봇")
+st.caption("K-Food 레시피에 대해 질문하세요. 대화를 이어갈 수 있습니다.")
+
+# 대화 기록 표시
+chat_container = st.container()
+with chat_container:
+    for message in st.session_state.chat_history:
+        if message["role"] == "user":
+            with st.chat_message("user"):
+                st.write(message["content"])
+        else:
+            with st.chat_message("assistant"):
+                # XML인 경우 코드 블록으로 표시
+                content = message["content"]
+                if content.startswith("<recipe>") or content.startswith("<error>"):
+                    st.code(content, language="xml")
+                else:
+                    st.write(content)
+                
+                # 미리보기 정보 표시 (XML인 경우)
+                if content.startswith("<recipe>"):
+                    preview = _parse_recipe_xml_for_preview(content, st.session_state.language)
+                    if preview:
+                        with st.expander("📄 미리보기 정보"):
+                            st.json(preview.__dict__)
+
+# 사용자 입력
+user_input = st.chat_input("메시지를 입력하세요... (예: '돼지고기, 김치, 양파로 레시피 만들어줘')")
+
+if user_input:
     if not bedrock_runtime:
         st.error("Boto3 클라이언트가 초기화되지 않았습니다. AWS 설정을 확인하세요.")
     else:
-        ingredients_list = [s.strip() for s in ingredients_input.split(',') if s.strip()]
+        # 첫 번째 메시지인지 확인 (사용자 메시지 추가 전)
+        is_first = len(st.session_state.chat_history) == 0
         
-        with st.spinner("Bedrock 호출 중... (KB 검색 및 레시피 생성)"):
-            try:
-                # asyncio.run을 사용해 async 함수 호출
-                response_obj, kb_context, final_prompt = asyncio.run(
-                    generate_recipe_response(language, ingredients_list)
-                )
-                
-                st.success("응답 생성 완료!")
-
-                # 탭으로 결과 분리
-                tab1, tab2, tab3, tab4 = st.tabs([
-                    "✅ 최종 결과 (XML)", 
-                    "📄 파싱된 미리보기",
-                    "🔍 KB 검색 컨텍스트", 
-                    "🤖 모델에 전달된 최종 프롬프트"
-                ])
-
-                with tab1:
-                    st.header("모델이 생성한 Raw XML")
-                    st.code(response_obj.full_recipe, language="xml")
-
-                with tab2:
-                    st.header("XML 파싱 결과 (미리보기)")
-                    if response_obj.preview:
-                        # dataclass를 dict로 변환하여 json으로 표시
-                        st.json(response_obj.preview.__dict__)
-                    else:
-                        st.error("XML 파싱에 실패했습니다.")
-
-                with tab3:
-                    st.header("Knowledge Base 검색 결과 (Context)")
-                    if not KNOWLEDGE_BASE_ID:
-                        st.warning("KB ID가 설정되지 않아 이 단계는 생략되었습니다.")
-                    elif not kb_context:
-                        st.info("KB에서 검색된 문서가 없습니다.")
-                    else:
-                        st.markdown(kb_context)
-                
-                with tab4:
-                    st.header("모델에 전달된 최종 User Query")
-                    st.text_area("Full Query", final_prompt, height=400)
-
-            except Exception as e:
-                st.error(f"테스트 실행 중 예외 발생: {e}")
-else:
-    st.info("사이드바에서 재료를 입력하고 '레시피 생성 테스트' 버튼을 클릭하세요.")
+        # 응답 생성 (현재 대화 기록 사용)
+        with st.spinner("생성 중..."):
+            assistant_response, kb_context = generate_chat_response(
+                user_input,
+                st.session_state.language,
+                st.session_state.chat_history,  # 현재까지의 대화 기록
+                is_first_message=is_first
+            )
+            
+            # 사용자 메시지를 대화 기록에 추가
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            
+            # KB 컨텍스트 저장 (첫 번째 메시지인 경우)
+            if is_first and kb_context:
+                st.session_state.kb_context = kb_context
+            
+            # 어시스턴트 응답을 대화 기록에 추가
+            st.session_state.chat_history.append(assistant_response)
+        
+        # 페이지 새로고침하여 대화 기록 업데이트
+        st.rerun()
