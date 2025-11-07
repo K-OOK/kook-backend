@@ -155,6 +155,10 @@ def extract_cook_time_from_recipe(recipe_xml):
         
         # XML 문자열을 파싱
         root = ET.fromstring(recipe_xml)
+
+        time_minutes = next((m.group(1) for title in root.findall("./section/title") 
+                     if title.text and (m := re.search(r'총 예상 시간:\s*(\d+)분', title.text))), None)
+        return int(time_minutes) if time_minutes else None
         
         # 한국어 버전: "2. 조리 방법 🍳 (총 예상 시간: 20분)"
         steps_section_title_ko = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
@@ -217,12 +221,8 @@ def enrich_database():
         cook_time = None
         if recipe_ko and not recipe_ko.startswith("<error>"):
             cook_time = extract_cook_time_from_recipe(recipe_ko)
-            print(recipe_ko)
-            print(cook_time)
         if cook_time is None and recipe_en and not recipe_en.startswith("<error>"):
             cook_time = extract_cook_time_from_recipe(recipe_en)
-            print(recipe_en)
-            print(cook_time)
 
         # 5. DB에 업데이트
         cursor.execute(
