@@ -49,10 +49,9 @@ async def get_hot_recipes_detail_from_db(ranking: int) -> Dict[str, Any]:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # ranking, name, score, ko, en, image_url 모두 조회 (랜덤 4개)
         cursor.execute(
             """
-            SELECT ranking, recipe_name, image_url, cook_time, description
+            SELECT ranking, recipe_name, image_url, cook_time, description, recipe_detail_ko, recipe_detail_en
             FROM hot_recipes 
             WHERE ranking = ?
             """,
