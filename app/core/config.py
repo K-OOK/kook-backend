@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     REDDIT_USER_AGENT: str
     REDDIT_USERNAME: str
 
-    ROLE_ARN: str
+    KNOWLEDGE_BASE_ID: str
 
     # DB 파일 경로
     DB_PATH: str = "kfood_recipes.db"
