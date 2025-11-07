@@ -3,6 +3,7 @@ import boto3
 import json
 import os
 import re
+import sys
 import asyncio
 import xml.etree.ElementTree as ET
 from typing import Optional, List
@@ -11,6 +12,47 @@ from dotenv import load_dotenv
 from langchain_aws import AmazonKnowledgeBasesRetriever
 
 # --- [0] Streamlit 테스트를 위한 준비 ---
+
+# 커맨드라인 인자 파싱 (streamlit run test_app.py -- arg1 arg2 arg3 arg4 형태)
+# sys.argv에서 '--' 이후의 인자만 추출
+APP_ARGS = []
+if '--' in sys.argv:
+    idx = sys.argv.index('--')
+    APP_ARGS = sys.argv[idx + 1:]
+    print(f"[Streamlit] 커맨드라인 인자: {APP_ARGS}")
+
+# 커맨드라인 인자 파싱 및 검증
+# arg1: language (kor/eng) - required
+# arg2: ingredient1 - required
+# arg3: ingredient2 - optional
+# arg4: ingredient3 - optional
+PARSED_ARGS = {
+    "language": None,
+    "ingredients": []
+}
+
+if len(APP_ARGS) >= 2:
+    # arg1: language 검증
+    arg1 = APP_ARGS[0].lower()
+    if arg1 in ["kor", "eng"]:
+        PARSED_ARGS["language"] = arg1
+    else:
+        print(f"⚠️ [인자 오류] arg1은 'kor' 또는 'eng'이어야 합니다. 현재 값: {arg1}")
+    
+    # arg2: ingredient1 (required)
+    PARSED_ARGS["ingredients"].append(APP_ARGS[1])
+    
+    # arg3: ingredient2 (optional)
+    if len(APP_ARGS) >= 3:
+        PARSED_ARGS["ingredients"].append(APP_ARGS[2])
+    
+    # arg4: ingredient3 (optional)
+    if len(APP_ARGS) >= 4:
+        PARSED_ARGS["ingredients"].append(APP_ARGS[3])
+    
+    print(f"[Streamlit] 파싱된 인자: language={PARSED_ARGS['language']}, ingredients={PARSED_ARGS['ingredients']}")
+elif len(APP_ARGS) > 0:
+    print(f"⚠️ [인자 오류] 최소 2개의 인자가 필요합니다 (language, ingredient1). 현재 인자 개수: {len(APP_ARGS)}")
 
 # 1. .env 파일 로드
 load_dotenv()
@@ -382,13 +424,28 @@ st.set_page_config(layout="wide", page_title="셰프 김 챗봇")
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "language" not in st.session_state:
-    st.session_state.language = "eng"
+    # 커맨드라인 인자에서 language가 있으면 사용, 없으면 기본값 "eng"
+    st.session_state.language = PARSED_ARGS.get("language") or "eng"
 if "kb_context" not in st.session_state:
     st.session_state.kb_context = ""
+if "initial_ingredients" not in st.session_state:
+    # 커맨드라인 인자에서 재료가 있으면 저장
+    st.session_state.initial_ingredients = PARSED_ARGS.get("ingredients", [])
 
 # --- 사이드바 ---
 with st.sidebar:
     st.header("⚙️ 설정")
+    
+    # 커맨드라인 인자 표시
+    if APP_ARGS:
+        st.subheader("커맨드라인 인자")
+        st.code(" ".join(APP_ARGS), language="bash")
+        st.caption("사용법: `streamlit run test_app.py -- language ingredient1 [ingredient2] [ingredient3]`")
+        if PARSED_ARGS["language"]:
+            st.success(f"✅ Language: `{PARSED_ARGS['language']}`")
+        if PARSED_ARGS["ingredients"]:
+            st.success(f"✅ Ingredients: `{', '.join(PARSED_ARGS['ingredients'])}`")
+        st.divider()
     
     # .env 로드 상태 표시
     st.subheader("환경 변수")
@@ -401,8 +458,9 @@ with st.sidebar:
     
     st.divider()
     
-    # 언어 설정
-    st.session_state.language = st.selectbox("언어 (Language)", ["eng", "kor"], index=0)
+    # 언어 설정 (커맨드라인 인자가 있으면 해당 값으로 초기화)
+    default_lang_idx = 0 if st.session_state.language == "eng" else 1
+    st.session_state.language = st.selectbox("언어 (Language)", ["eng", "kor"], index=default_lang_idx)
     
     st.divider()
     
@@ -412,9 +470,6 @@ with st.sidebar:
         st.session_state.kb_context = ""
         st.rerun()
 
-# --- 메인 화면 ---
-st.title("🧑‍🍳 '셰프 김' 레시피 챗봇")
-st.caption("K-Food 레시피에 대해 질문하세요. 대화를 이어갈 수 있습니다.")
 
 # 대화 기록 표시
 chat_container = st.container()
@@ -439,8 +494,40 @@ with chat_container:
                         with st.expander("📄 미리보기 정보"):
                             st.json(preview.__dict__)
 
+# 커맨드라인 인자로 재료가 전달된 경우 자동으로 첫 메시지 생성
+if "auto_sent" not in st.session_state:
+    st.session_state.auto_sent = False
+
+if (not st.session_state.auto_sent and 
+    st.session_state.initial_ingredients and 
+    len(st.session_state.chat_history) == 0):
+    # 자동으로 첫 메시지 생성
+    ingredients_str = ", ".join(st.session_state.initial_ingredients)
+    if st.session_state.language == "eng":
+        auto_message = f"Please create a K-Food recipe using these ingredients: {ingredients_str}"
+    else:
+        auto_message = f"내가 가진 재료: {ingredients_str}로 K-Food 레시피를 만들어주세요."
+    
+    # 자동 메시지 처리
+    if bedrock_runtime:
+        is_first = True
+        with st.spinner("생성 중..."):
+            assistant_response, kb_context = generate_chat_response(
+                auto_message,
+                st.session_state.language,
+                [],
+                is_first_message=is_first
+            )
+            
+            st.session_state.chat_history.append({"role": "user", "content": auto_message})
+            if kb_context:
+                st.session_state.kb_context = kb_context
+            st.session_state.chat_history.append(assistant_response)
+            st.session_state.auto_sent = True
+        st.rerun()
+
 # 사용자 입력
-user_input = st.chat_input("메시지를 입력하세요... (예: '돼지고기, 김치, 양파로 레시피 만들어줘')")
+user_input = st.chat_input("메시지를 입력하세요...")
 
 if user_input:
     if not bedrock_runtime:
