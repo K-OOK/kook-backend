@@ -5,6 +5,10 @@ from typing import List, Optional
 # --- 1. /chat (Bedrock 챗봇)용 모델 ---
 
 class ChatRequest(BaseModel):
+    language: str = Field(
+        default="kor",
+        description="응답 언어: 'kor' (한국어) 또는 'eng' (영어)"
+    )
     ingredients: List[str] = Field(
         max_length=3,
         description="사용자가 가진 재료 (필수, 최대 3개)"

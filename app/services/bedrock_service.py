@@ -18,8 +18,86 @@ except Exception as e:
     bedrock_runtime = None
     MODEL_ID = None
 
-SYSTEM_PROMPT = """
-당신은 "셰프 김(Chef Kim)"이라는 이름을 가진, 외국인에게 K-Food를 알려주는 전문 요리사입니다.
+def _get_system_prompt(language: str) -> str:
+    """
+    language에 따라 한국어 또는 영어 시스템 프롬프트를 반환
+    """
+    if language.lower() == "eng":
+        return """You are "Chef Kim", a professional chef who introduces K-Food to foreigners.
+Your mission is to provide K-Food recipes in **English** in a **very clear and easy-to-follow format** based on user requests.
+
+When users make requests, you must strictly follow the <template> XML structure provided below.
+Do not add any greetings or small talk outside the <template> tags.
+
+<guidelines>
+- [Rule 1] You must use the ingredients provided by the user.
+- [Rule 2] You must **never** suggest absurd recipes that don't taste good together, like "matcha kimchi", "chocolate bibimbap", or "mint chocolate tteokbokki".
+- [Rule 3] Prioritize creative fusion dishes with proven flavors like 'gochujang butter bulgogi', 'kimchi cheese pasta', or 'corn cheese dakgalbi'.
+- [Rule 4] All responses must be in **English** and must strictly follow the <template> XML structure below.
+- [Rule 5] Do not add any greetings or small talk outside the <template> tags.
+</guidelines>
+
+<template>
+<recipe>
+
+<title>
+[ Write the dish title here ] (for 1 serving)
+</title>
+
+<section>
+<title>1. Ingredients 🥣</title>
+<ingredients>
+- [Ingredient 1] ([Quantity 1, e.g., 100g or 1 tablespoon])
+- [Ingredient 2] ([Quantity 2])
+- (List all ingredients in this format)
+</ingredients>
+</section>
+
+<section>
+<title>2. Cooking Method 🍳 (Total estimated time: [total time] minutes)</title>
+<steps>
+<step>
+<name>1) [Step 1 name, e.g., Prepare ingredients] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description>
+</step>
+<step>
+<name>2) [Step 2 name, e.g., Stir-fry vegetables] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description>
+</step>
+<step>
+<name>3) [Step 3 name, e.g., Add sauce and simmer] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+</description>
+</step>
+</steps>
+</section>
+
+<section>
+<title>3. Recommended Drinks 🥂</title>
+<recommendation>
+- [Recommended drink 1, e.g., makgeolli or beer]
+</recommendation>
+</section>
+
+<tip>
+<title>💡 Chef's Tip</title>
+<content>
+- [Tip 1 to make this dish easier or more delicious]
+- [Interesting fact about this dish (optional)]
+</content>
+</tip>
+
+</recipe>
+</template>"""
+    else:  # 한국어 (기본값)
+        return """당신은 "셰프 김(Chef Kim)"이라는 이름을 가진, 외국인에게 K-Food를 알려주는 전문 요리사입니다.
 당신의 임무는 사용자의 요청에 맞춰, K-Food 레시피를 **한국어**로, 그리고 **매우 명확하고 따라하기 쉬운 형식**으로 제공하는 것입니다.
 
 사용자가 요청할 때, 당신은 반드시, 반드시 아래에 제공된 <template> XML 구조를 완벽하게 따라야 합니다.
@@ -91,18 +169,15 @@ SYSTEM_PROMPT = """
 </tip>
 
 </recipe>
-</template>
-"""
-# -----------------------------------------------------------------
-# [끝] 템플릿은 여기까지
-# -----------------------------------------------------------------
+</template>"""
 
-def _parse_recipe_xml_for_preview(xml_string: str) -> Optional[ChatPreviewInfo]:
+def _parse_recipe_xml_for_preview(xml_string: str, language: str = "kor") -> Optional[ChatPreviewInfo]:
     """
     Bedrock이 생성한 레시피 XML을 파싱하여 미리보기 정보를 추출
+    language에 따라 한국어/영어 버전을 지원
     """
     try:
-        # XML <recipe> 태그 안의 내용만 정확히 추출 (이전 코드와 동일)
+        # XML <recipe> 태그 안의 내용만 정확히 추출
         if '<recipe>' in xml_string:
             xml_string = "<recipe>" + xml_string.split('<recipe>', 1)[1]
         if '</recipe>' in xml_string:
@@ -111,10 +186,16 @@ def _parse_recipe_xml_for_preview(xml_string: str) -> Optional[ChatPreviewInfo]:
         # XML 문자열을 파싱
         root = ET.fromstring(xml_string)
         
+        # 언어에 따라 다른 키워드 사용
+        is_english = language.lower() == "eng"
+        
         # 1. 재료 목록 추출
-        # <section> 태그 중 <title>이 "1. 재료 🥣"인 것을 찾음
         ingredients_list = []
-        ingredients_section = root.find(".//section[title='1. 재료 🥣']")
+        if is_english:
+            ingredients_section = root.find(".//section[title='1. Ingredients 🥣']")
+        else:
+            ingredients_section = root.find(".//section[title='1. 재료 🥣']")
+        
         if ingredients_section is not None:
             ingredients_tag = ingredients_section.find('ingredients')
             if ingredients_tag is not None:
@@ -125,16 +206,21 @@ def _parse_recipe_xml_for_preview(xml_string: str) -> Optional[ChatPreviewInfo]:
                 ]
 
         # 2. 총 조리 시간 추출
-        # <section> 태그 중 <title>이 "2. 조리 방법 🍳..."으로 시작하는 것을 찾음
-        total_time = "정보 없음"
-        steps_section_title = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
-        if steps_section_title is not None:
-            # title 태그의 텍스트 (예: "2. 조리 방법 🍳 (총 예상 시간: 20분)")
-            title_text = steps_section_title.text
-            # 정규표현식으로 ( ) 괄호 안의 시간만 추출
-            match = re.search(r'\((총 예상 시간:.*?)\)', title_text)
-            if match:
-                total_time = match.group(1) # "총 예상 시간: 20분"
+        total_time = "정보 없음" if not is_english else "Information not available"
+        if is_english:
+            steps_section_title = root.find(".//section/title[starts-with(., '2. Cooking Method 🍳')]")
+            if steps_section_title is not None:
+                title_text = steps_section_title.text
+                match = re.search(r'\((Total estimated time:.*?)\)', title_text)
+                if match:
+                    total_time = match.group(1)  # "Total estimated time: 20 minutes"
+        else:
+            steps_section_title = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
+            if steps_section_title is not None:
+                title_text = steps_section_title.text
+                match = re.search(r'\((총 예상 시간:.*?)\)', title_text)
+                if match:
+                    total_time = match.group(1)  # "총 예상 시간: 20분"
 
         return ChatPreviewInfo(
             total_time=total_time,
@@ -146,28 +232,41 @@ def _parse_recipe_xml_for_preview(xml_string: str) -> Optional[ChatPreviewInfo]:
         # 파싱에 실패해도 미리보기만 못 보낼 뿐, 에러는 아님
         return None
 
-async def generate_recipe_response(user_query: str, ingredients: list = None):
+async def generate_recipe_response(language: str, ingredients: list = None):
     """
-    Bedrock 챗봇을 호출하고, 결과를 파싱하여
-    (full_recipe, preview_info) 튜플로 반환
+    Bedrock 챗봇을 호출하고, 결과를 파싱하여 ChatResponse 반환
+    language: "kor" (한국어) 또는 "eng" (영어)
     """
     if not bedrock_runtime:
-        error_xml = "<error>Bedrock service is not initialized. AWS credentials를 확인하세요.</error>"
-        return ChatResponse(full_recipe=error_xml, preview=None) # 튜플로 반환
+        error_msg = "Bedrock service is not initialized. Please check AWS credentials."
+        if language.lower() != "eng":
+            error_msg = "Bedrock service가 초기화되지 않았습니다. AWS credentials를 확인하세요."
+        error_xml = f"<error>{error_msg}</error>"
+        return ChatResponse(full_recipe=error_xml, preview=None)
 
-    # --- 1. 유저 쿼리와 재료를 합쳐서 'user' 메시지 구성 ---
+    # --- 1. 언어에 맞는 시스템 프롬프트 가져오기 ---
+    system_prompt = _get_system_prompt(language)
+    
+    # --- 2. 유저 쿼리와 재료를 합쳐서 'user' 메시지 구성 ---
+    is_english = language.lower() == "eng"
     if ingredients:
         ingredient_list = ", ".join(ingredients)
-        full_query = f"요청 메뉴: {user_query}\n내가 가진 재료: [{ingredient_list}]"
+        if is_english:
+            full_query = f"Please create a K-Food recipe using these ingredients: [{ingredient_list}]"
+        else:
+            full_query = f"내가 가진 재료: [{ingredient_list}]로 K-Food 레시피를 만들어주세요."
     else:
-        full_query = f"요청 메뉴: {user_query}"
+        if is_english:
+            full_query = "Please create a K-Food recipe."
+        else:
+            full_query = "K-Food 레시피를 만들어주세요."
 
-    # --- 2. Bedrock API 호출 (Claude 3 모델 기준) ---
+    # --- 3. Bedrock API 호출 (Claude 3 모델 기준) ---
     try:
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 2048, # 레시피가 길 수 있으니 넉넉하게
-            "system": SYSTEM_PROMPT, # 👈 [중요] 위에서 정의한 시스템 프롬프트
+            "max_tokens": 2048,  # 레시피가 길 수 있으니 넉넉하게
+            "system": system_prompt,  # 언어에 맞는 시스템 프롬프트
             "messages": [
                 {
                     "role": "user",
@@ -176,15 +275,21 @@ async def generate_recipe_response(user_query: str, ingredients: list = None):
             ]
         })
 
-        response = bedrock_runtime.invoke_model(...) # (API 호출)
+        response = bedrock_runtime.invoke_model(
+            modelId=MODEL_ID,
+            body=body
+        )
 
         response_body = json.loads(response.get('body').read())
         full_recipe_xml = response_body.get('content')[0].get('text')
         
-        preview_info = _parse_recipe_xml_for_preview(full_recipe_xml)
+        preview_info = _parse_recipe_xml_for_preview(full_recipe_xml, language)
         
         return ChatResponse(full_recipe=full_recipe_xml, preview=preview_info)
 
     except Exception as e:
         print(f"[Bedrock_Service] Bedrock API 호출 오류: {e}")
-        return f"<error>레시피 생성 중 오류가 발생했습니다: {e}</error>"
+        error_msg = f"An error occurred while generating the recipe: {e}"
+        if language.lower() != "eng":
+            error_msg = f"레시피 생성 중 오류가 발생했습니다: {e}"
+        return ChatResponse(full_recipe=f"<error>{error_msg}</error>", preview=None)

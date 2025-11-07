@@ -9,9 +9,11 @@ pydantic-settings
 boto3
 langchain-aws
 langchain-core
+langchain-community
 
 # 데이터 분석 (DB 생성 스크립트용)
 pandas
+pypdf
 
 # Reddit
 praw

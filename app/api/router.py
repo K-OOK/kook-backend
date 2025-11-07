@@ -9,10 +9,11 @@ router = APIRouter()
 async def handle_chat(request: ChatRequest):
     """
     (기능 1) Bedrock 챗봇 API
-    유저의 쿼리와 재료를 받아 Bedrock으로 레시피를 생성
+    유저의 재료와 언어 설정을 받아 Bedrock으로 레시피를 생성
+    language: "kor" (한국어) 또는 "eng" (영어)
     """
     response = await bedrock_service.generate_recipe_response(
-        user_query=request.user_query,
+        language=request.language,
         ingredients=request.ingredients
     )
     
