@@ -1,13 +1,11 @@
 import boto3
 import json
 from app.core.config import settings
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import xml.etree.ElementTree as ET
 import re
 from app.schemas.recipe import ChatPreviewInfo, ChatResponse
-# --- [수정 1] Import 추가 ---
 from langchain_aws import AmazonKnowledgeBasesRetriever
-# ---------------------------
 
 # 설정 파일에서 AWS 정보 로드
 try:
@@ -17,7 +15,6 @@ try:
     )   
     MODEL_ID = settings.BEDROCK_MODEL_ID
     
-    # --- [수정 2] Retriever 초기화 로직 추가 ---
     KNOWLEDGE_BASE_ID = settings.KNOWLEDGE_BASE_ID
     if KNOWLEDGE_BASE_ID:
         retriever = AmazonKnowledgeBasesRetriever(
@@ -27,7 +24,6 @@ try:
         )
     else:
         retriever = None
-    # -----------------------------------
 
 except Exception as e:
     print(f"[Bedrock_Service] Boto3 클라이언트 또는 Retriever 초기화 실패: {e}")
@@ -37,7 +33,6 @@ except Exception as e:
     KNOWLEDGE_BASE_ID = None
 
 
-# --- [수정 3] 'format_docs' 함수 추가 ---
 def format_docs(docs):
     """검색된 문서를 문자열로 변환 (참고 코드에서 가져옴)"""
     if not docs:
@@ -79,7 +74,6 @@ def format_docs(docs):
     )
     print(f"✅ [KB] {len(formatted)}개 문서 포맷 완료 (총 {len(result)}자)")
     return result
-# -----------------------------------
 
 
 def _get_system_prompt(language: str) -> str:
@@ -252,179 +246,58 @@ Do not add any greetings or small talk outside the <template> tags.
 </recipe>
 </template>"""
 
-def _parse_recipe_xml_for_preview(xml_string: str, language: str = "kor") -> Optional[ChatPreviewInfo]:
+def create_bedrock_payload(
+    language: str,
+    ingredients: List[str],
+    chat_history: List[Dict[str, str]], 
+    context_str: str
+) -> Dict[str, Any]:
     """
-    Bedrock이 생성한 레시피 XML을 파싱하여 미리보기 정보를 추출
-    language에 따라 한국어/영어 버전을 지원
-    (이 함수는 수정 사항 없음)
+    Bedrock API 호출에 필요한 최종 JSON Payload를 생성하여 반환 (스트리밍용)
     """
-    try:
-        # XML <recipe> 태그 안의 내용만 정확히 추출
-        if '<recipe>' in xml_string:
-            xml_string = "<recipe>" + xml_string.split('<recipe>', 1)[1]
-        if '</recipe>' in xml_string:
-            xml_string = xml_string.split('</recipe>', 1)[0] + "</recipe>"
-            
-        # XML 문자열을 파싱
-        root = ET.fromstring(xml_string)
-        
-        # 언어에 따라 다른 키워드 사용
-        is_english = language.lower() == "eng"
-        
-        # 1. 재료 목록 추출
-        ingredients_list = []
-        if is_english:
-            ingredients_section = root.find(".//section[title='1. Ingredients 🥣']")
-        else:
-            ingredients_section = root.find(".//section[title='1. 재료 🥣']")
-        
-        if ingredients_section is not None:
-            ingredients_tag = ingredients_section.find('ingredients')
-            if ingredients_tag is not None:
-                # ingredients 태그의 텍스트를 줄바꿈 기준으로 분리
-                ingredients_list = [
-                    line.strip() for line in ingredients_tag.text.strip().split('\n') 
-                    if line.strip()
-                ]
-
-        # 2. 총 조리 시간 추출
-        total_time = "정보 없음" if not is_english else "Information not available"
-        if is_english:
-            steps_section_title = root.find(".//section/title[starts-with(., '2. Cooking Method 🍳')]")
-            if steps_section_title is not None:
-                title_text = steps_section_title.text
-                match = re.search(r'\((Total estimated time:.*?)\)', title_text)
-                if match:
-                    total_time = match.group(1)  # "Total estimated time: 20 minutes"
-        else:
-            steps_section_title = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
-            if steps_section_title is not None:
-                title_text = steps_section_title.text
-                match = re.search(r'\((총 예상 시간:.*?)\)', title_text)
-                if match:
-                    total_time = match.group(1)  # "총 예상 시간: 20분"
-
-        return ChatPreviewInfo(
-            total_time=total_time,
-            ingredients=ingredients_list
-        )
-        
-    except Exception as e:
-        print(f"[XML 파싱 오류] {e}")
-        # 파싱에 실패해도 미리보기만 못 보낼 뿐, 에러는 아님
-        return None
-
-# generate_recipe_response 함수만 수정 (다른 함수들은 그대로 둔다고 가정)
-
-async def generate_recipe_response(language: str, ingredients: list = None):
-    """
-    Bedrock 챗봇을 호출하고, 결과를 파싱하여 ChatResponse 반환
-    (KB 사용을 기본으로 전제)
-    language: "kor" (한국어) 또는 "eng" (영어)
-    """
-    if not bedrock_runtime:
-        error_msg = "Bedrock service is not initialized. Please check AWS credentials."
-        if language.lower() != "eng":
-            error_msg = "Bedrock service가 초기화되지 않았습니다. AWS credentials를 확인하세요."
-        error_xml = f"<error>{error_msg}</error>"
-        return ChatResponse(full_recipe=error_xml, preview=None)
-
-    # --- 1. 언어에 맞는 시스템 프롬프트 가져오기 ---
+    is_english = language.lower() == "eng"
     system_prompt = _get_system_prompt(language)
     
-    # --- 2. 유저 쿼리와 재료를 합쳐서 'user' 메시지 구성 ---
-    is_english = language.lower() == "eng"
-    
-    # KB 검색 및 기본 쿼리에 사용할 'base_query'
+    # 1. base_query 및 user_message 구성
     if ingredients:
         ingredient_list = ", ".join(ingredients)
-        if is_english:
-            base_query = f"K-Food recipe using these ingredients: [{ingredient_list}]"
-            user_query = f"Please create a K-Food recipe using these ingredients: [{ingredient_list}]"
-        else:
-            base_query = f"재료: [{ingredient_list}]를 사용한 K-Food 레시피"
-            user_query = f"내가 가진 재료: [{ingredient_list}]로 K-Food 레시피를 만들어주세요."
+        base_query = f"K-Food recipe using: {ingredient_list}" if is_english else f"재료: {ingredient_list} K-Food 레시피"
     else:
-        if is_english:
-            base_query = "K-Food recipe"
-            user_query = "Please create a K-Food recipe."
-        else:
-            base_query = "K-Food 레시피"
-            user_query = "K-Food 레시피를 만들어주세요."
+        # 이 경우는 첫 질문이거나 꼬리 질문이 재료 없이 들어온 경우 (단순 추천)
+        base_query = "K-Food recipe" if is_english else "K-Food 레시피"
 
-    # --- 2-1. (수정) KB RAG 로직 (use_kb 파라미터 제거) ---
-    context_str = ""
-    
-    # retriever가 성공적으로 초기화된 경우 (settings.KNOWLEDGE_BASE_ID가 유효한 경우)
-    if retriever:
-        try:
-            print(f"🔍 [KB] Retrieving for query: {base_query}")
-            # 참고: retriever.invoke는 동기 함수이므로,
-            # 실제 비동기 FastAPI 환경에서는 run_in_threadpool 등을 권장하지만
-            # 최소 수정을 위해 일단 동기로 호출합니다.
-            retrieved_docs = retriever.invoke(base_query)
-            context_str = format_docs(retrieved_docs)
-        except Exception as e:
-            print(f"⚠️ [KB] Retriever failed: {e}")
-            context_str = "Knowledge Base retrieval failed." if is_english else "Knowledge Base 검색에 실패했습니다."
+    is_first_message = not chat_history 
+
+    # 2. 사용자 메시지 구성
+    if is_first_message and context_str:
+        # KB 컨텍스트 주입 (첫 질문)
+        user_message = f"""Here is some context. Use this to create the recipe:
+<context>{context_str}</context>
+User Request: {base_query}""" if is_english else f"""KB 참고 자료입니다:
+<context>{context_str}</context>
+사용자 요청: {base_query}"""
     else:
-        # Retriever가 None인 경우 (KB ID가 없거나 초기화 실패)
-        print("⚠️ [KB] Retriever is not initialized or KNOWLEDGE_BASE_ID is missing. Skipping KB search.")
-        # context_str은 "" (빈 문자열)로 유지됨
-    
-    # --- 2-2. 최종 쿼리에 KB 컨텍스트 주입 ---
-    full_query = ""
-    if context_str:
-        # KB 검색 결과가 있으면 컨텍스트 주입
-        if is_english:
-            full_query = f"""Here is some context from the knowledge base. Use this information to create the recipe:
-<context>
-{context_str}
-</context>
-
-User Request: {user_query}
-"""
+        # 꼬리 질문 시나리오: ingredients 리스트의 첫 번째 요소를 꼬리 질문 텍스트로 간주
+        # (router에서 payload.ingredients[0]에 실제 꼬리 질문 텍스트를 담아 보낸다고 가정)
+        if not is_first_message and ingredients and len(ingredients) > 0:
+            user_message = ingredients[0]
         else:
-            full_query = f"""Knowledge Base에서 검색된 참고 자료입니다. 이 정보를 활용해서 레시피를 만들어주세요:
-<context>
-{context_str}
-</context>
+            user_message = base_query
 
-사용자 요청: {user_query}
-"""
-    else:
-        # KB를 사용 안 하거나(retriever=None), 검색 결과가 없으면(context_str="") 원래 쿼리 사용
-        full_query = user_query 
 
-    # --- 3. Bedrock API 호출 (Claude 3 모델 기준) ---
-    try:
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 2048,  # 레시피가 길 수 있으니 넉넉하게
-            "system": system_prompt,  # 언어에 맞는 시스템 프롬프트
-            "messages": [
-                {
-                    "role": "user",
-                    "content": full_query # KB 컨텍스트가 포함되거나 포함되지 않은 최종 쿼리
-                }
-            ]
-        })
+    # 3. 메시지 히스토리 정리 및 추가
+    messages = []
+    messages.extend(chat_history)
+    messages.append({"role": "user", "content": user_message})
 
-        response = bedrock_runtime.invoke_model(
-            modelId=MODEL_ID,
-            body=body
-        )
+    # 최종 Payload
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 4096,
+        "system": system_prompt,
+        "messages": messages,
+        "stream": True,
+        "model_id": MODEL_ID # Model ID를 페이로드에 포함하여 router에서 사용
+    }
 
-        response_body = json.loads(response.get('body').read())
-        full_recipe_xml = response_body.get('content')[0].get('text')
-        
-        preview_info = _parse_recipe_xml_for_preview(full_recipe_xml, language)
-        
-        return ChatResponse(full_recipe=full_recipe_xml, preview=preview_info)
-
-    except Exception as e:
-        print(f"[Bedrock_Service] Bedrock API 호출 오류: {e}")
-        error_msg = f"An error occurred while generating the recipe: {e}"
-        if language.lower() != "eng":
-            error_msg = f"레시피 생성 중 오류가 발생했습니다: {e}"
-        return ChatResponse(full_recipe=f"<error>{error_msg}</error>", preview=None)
+    return body

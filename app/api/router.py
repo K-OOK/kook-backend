@@ -1,23 +1,103 @@
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from typing import List, Dict, Any
 from app.schemas.recipe import ChatRequest, ChatResponse, HotRecipe, TopIngredient
 from app.services import bedrock_service, db_service
+from langchain_aws import AmazonKnowledgeBasesRetriever
+from typing import List, Dict, Any, Optional
+import boto3
+import json
+import os
+import sys
 
 router = APIRouter()
-
-@router.post("/chat", response_model=ChatResponse, tags=["Top Ingredients"])
-async def handle_chat(request: ChatRequest):
+'
+@router.post("/chat/stream", tags=["Chat"])
+async def handle_chat_stream(
+    payload: ChatRequest,
+):
     """
-    (기능 1) Bedrock 챗봇 API
+    (기능 1) Bedrock 챗봇 스트리밍 API
     유저의 재료와 언어 설정을 받아 Bedrock으로 레시피를 생성
     language: "kor" (한국어) 또는 "eng" (영어)
     """
-    response = await bedrock_service.generate_recipe_response(
-        language=request.language,
-        ingredients=request.ingredients
-    )
+    bedrock_runtime = bedrock_service.bedrock_runtime
+    retriever = bedrock_service.retriever
     
-    return response
+    if not bedrock_runtime:
+        async def error_stream():
+            yield "<error>Bedrock client initialization failed. Check Cloud9 IAM permissions.</error>"
+        return StreamingResponse(error_stream(), media_type="text/plain")
+
+    language = payload.language
+    ingredients = payload.ingredients
+    chat_history = payload.chat_history or []
+    is_first_message = not chat_history # 꼬리 질문 유지를 위한 핵심
+
+    context_str = ""
+    base_query = "" # KB 검색 쿼리
+
+    # --- 1. KB 검색 (첫 질문일 때만) ---
+    if is_first_message and ingredients and retriever:
+        ingredient_list = ", ".join(ingredients)
+        base_query = f"K-Food recipe using: {ingredient_list}" if language.lower() == "eng" else f"재료: {ingredient_list} K-Food 레시피"
+        
+        try:
+            print(f"🔍 [KB] 비동기 검색 실행: {base_query}")
+            # 동기 함수(retriever.invoke)를 비동기(FastAPI)에서 안전하게 실행
+            retrieved_docs = await run_in_threadpool(retriever.invoke, base_query)
+            context_str = bedrock_service.format_docs(retrieved_docs)
+        except Exception as e:
+            print(f"⚠️ [KB] Retriever failed: {e}")
+            context_str = "Knowledge Base retrieval failed." if language.lower() == "eng" else "Knowledge Base 검색에 실패했습니다."
+    
+    # --- 2. Bedrock Payload 생성 ---
+    # KB 컨텍스트와 Chat History를 포함한 최종 payload 생성
+    try:
+        payload_body = bedrock_service.create_bedrock_payload(
+            language=language,
+            ingredients=ingredients,
+            chat_history=chat_history,
+            context_str=context_str,
+            model_id=BEDROCK_MODEL_ID
+        )
+    except Exception as e:
+        async def error_stream():
+            yield f"<error>Payload 생성 오류: {e}</error>"
+        return StreamingResponse(error_stream(), media_type="text/plain")
+        
+    # --- 3. Bedrock 스트리밍 API 호출 ---
+    try:
+        response_stream = await run_in_threadpool(
+            bedrock_runtime.invoke_model_with_response_stream,
+            modelId=payload_body['model_id'], # bedrock_service에서 model_id가 payload에 포함된다고 가정
+            body=json.dumps(payload_body)
+        )
+
+        # --- 4. 비동기 제너레이터 (스트리밍 응답 반환) ---
+        async def stream_generator():
+            try:
+                if response_stream:
+                    for event in response_stream.get("body"):
+                        chunk = json.loads(event.get("chunk", {}).get("bytes", "{}"))
+                        
+                        if chunk.get('type') == 'content_block_delta':
+                            text_delta = chunk.get('delta', {}).get('text', '')
+                            yield text_delta
+                        
+                        elif chunk.get('type') == 'message_stop':
+                            break
+            except Exception as e:
+                yield f"<error>스트리밍 중 오류 발생: {e}</error>"
+
+        return StreamingResponse(stream_generator(), media_type="text/plain")
+
+    except Exception as e:
+        print(f"[Bedrock_Service] Bedrock API 호출 오류: {e}")
+        async def error_stream():
+            yield f"<error>Bedrock API 호출 오류: {e}</error>"
+        return StreamingResponse(error_stream(), media_type="text/plain")
 
 @router.get("/hot-recipes", response_model=List[Dict[str, Any]], tags=["Hot Recipes"])
 async def get_hot_recipes():

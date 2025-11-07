@@ -1,5 +1,7 @@
+# app/schemas/recipe.py (수정)
+
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 
 # --- 1. /chat (Bedrock 챗봇)용 모델 ---
@@ -12,6 +14,10 @@ class ChatRequest(BaseModel):
     ingredients: List[str] = Field(
         max_length=3,
         description="사용자가 가진 재료 (필수, 최대 3개)"
+    )
+    chat_history: Optional[List[Dict[str, str]]] = Field(
+        default=[],
+        description="이전 대화 기록 (role, content 포함)"
     )
 
 class ChatPreviewInfo(BaseModel):
