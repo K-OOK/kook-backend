@@ -1,3 +1,5 @@
+# app/services/bedrock_service.py (LangChain 기반 최종 수정)
+
 import boto3
 import json
 from app.core.config import settings
@@ -5,19 +7,23 @@ from typing import Optional, List, Dict, Any
 import xml.etree.ElementTree as ET
 import re
 from app.schemas.recipe import ChatPreviewInfo, ChatResponse
+
+# --- [수정 1] Boto3 대신 LangChain 객체 임포트 (기존 코드 유지) ---
 from langchain_aws import AmazonKnowledgeBasesRetriever, ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableSequence # 체인 타입
 from langchain_core.messages import HumanMessage, AIMessage # 메시지 타입
+# ---------------------------
 
-# 설정 파일에서 AWS 정보 로드
+# 설정 파일에서 AWS 정보 로드 (기존 코드 유지)
 try:
     llm = ChatBedrock(
         model_id=settings.BEDROCK_MODEL_ID,
         region_name=settings.AWS_DEFAULT_REGION,
-        model_kwargs={"max_tokens": 4096}, # 충분히 넉넉하게 설정
-        streaming=True, # 스트리밍 활성화
+        model_kwargs={"max_tokens": 4096}, 
+        streaming=True, 
     )
+    bedrock_runtime = None
     MODEL_ID = settings.BEDROCK_MODEL_ID
     
     KNOWLEDGE_BASE_ID = settings.KNOWLEDGE_BASE_ID
@@ -33,17 +39,19 @@ try:
 except Exception as e:
     print(f"[Bedrock_Service] LangChain LLM 또는 Retriever 초기화 실패: {e}")
     bedrock_runtime = None
-    llm = None # 🔴 LLM 객체 실패 시 None 할당
-    retriever = None # 실패 시 retriever도 None
+    llm = None
+    retriever = None 
     MODEL_ID = None
     KNOWLEDGE_BASE_ID = None
 
+
+# --- [format_docs] 함수는 그대로 유지 ---
 def format_docs(docs):
-    """검색된 문서를 문자열로 변환 (참고 코드에서 가져옴)"""
+    """KB 검색된 문서를 문자열로 변환하여 RAG 컨텍스트로 사용."""
+    # ... (로직 생략, 기존과 동일) ...
     if not docs:
         print("⚠️ [KB] 검색된 문서 없음")
-        return "" # KB 검색 결과 없으면 빈 문자열 반환
-    # ... (로직 생략, 기존과 동일) ...
+        return ""
     formatted = []
     for idx, doc in enumerate(docs):
         content = None
@@ -72,37 +80,245 @@ def format_docs(docs):
 
 # --- [_get_system_prompt] 함수는 그대로 유지 ---
 def _get_system_prompt(language: str) -> str:
-    # ... (로직 생략, 기존과 동일) ...
+    """
+    language에 따라 한국어 또는 영어 시스템 프롬프트를 반환
+    """
     if language.lower() == "eng":
         return """You are "Chef Kim", a professional chef who introduces K-Food to foreigners.
-... (중략) ...
-"""
+Your mission is to provide K-Food recipes in **English** in a **very clear and easy-to-follow format** based on user requests.
+
+When users make requests, you must strictly follow the <template> XML structure provided below.
+Do not add any greetings or small talk outside the <template> tags.
+
+<guidelines>
+- [Rule 1] **[Mandatory] Ingredient Utilization:** You MUST prioritize using the ingredients provided by the user.
+
+- [Rule 2] **[Critical] Taste Validation & KB Usage:**
+  1. **(Forbidden)** NEVER suggest absurd, unpalatable combinations (e.g., "Matcha Kimchi", "Chocolate Bibimbap", "Mint Chocolate Tteokbokki").
+  2. **(Required)** You MUST consult the Knowledge Base (KB) to provide a validated recipe.
+  3. **(Fallback)** If the KB has no validated recipe for the user's ingredients, OR the only possible combination is absurd (see #1), you MUST suggest an **alternative K-Food dish** that uses **similar ingredients**. (e.g., Instead of 'Mint Chocolate' and 'Tteokbokki', suggest a 'Choco Rice Cake Pie' using 'Chocolate' and 'Rice Cakes').
+
+- [Rule 3] **[Priority] Proven Fusion:** Prioritize creative but validated fusion dishes (e.g., 'Gochujang Butter Bulgogi', 'Kimchi Cheese Pasta', 'Corn Cheese Dakgalbi').
+
+- [Rule 4] **[Format] Output:** The response MUST be in **English** and MUST strictly adhere to the provided `<template>` XML structure.
+
+- [Rule 5] **[Constraint] No Chatter:** DO NOT add any text (greetings, explanations, etc.) outside the `<template>` tags.
+
+- [Rule 6] **[Format-Ingredients] Ingredient Format:** All ingredients in the <ingredients> section MUST strictly follow the "Ingredient Name (Quantity)" format. (e.g., Sesame oil (1 tablespoon))
+</guidelines>
+
+<template>
+<recipe>
+
+<title>
+[ Write the dish title here ] (for 1 serving)
+</title>
+
+<section>
+<title>1. Ingredients 🥣</title>
+<ingredients>
+- [Ingredient 1] ([Quantity 1, e.g., 100g or 1 tablespoon])
+- [Ingredient 2] ([Quantity 2])
+- (List all ingredients in this format)
+</ingredients>
+</section>
+
+<section>
+<title>2. Cooking Method 🍳 (Total estimated time: [total time] minutes)</title>
+<steps>
+<step>
+<name>1) [Step 1 name, e.g., Prepare ingredients] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description>
+</step>
+<step>
+<name>2) [Step 2 name, e.g., Stir-fry vegetables] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description>
+</step>
+<step>
+<name>3) [Step 3 name, e.g., Add sauce and simmer] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+</description>
+</step>
+</steps>
+</section>
+
+<section>
+<title>3. Recommended Drinks 🥂</title>
+<recommendation>
+- [Recommended drink 1, e.g., makgeolli or beer]
+</recommendation>
+</section>
+
+<tip>
+<title>💡 Chef's Tip</title>
+<content>
+- [Tip 1 to make this dish easier or more delicious]
+- [Interesting fact about this dish (optional)]
+</content>
+</tip>
+
+</recipe>
+</template>"""
     else:  # 한국어 (기본값)
         return """당신은 "셰프 김(Chef Kim)"이라는 이름을 가진, 외국인에게 **K-Food(한식)**를 알려주는 전문 요리사입니다.
-... (중략) ...
-"""
+당신의 임무는 사용자의 요청에 맞춰, K-Food 레시피를 **한국어**로, 그리고 **매우 명확하고 따라하기 쉬운 형식**으로 제공하는 것입니다.
+모든 레시피는 반드시 한식 또는 퓨전 한식의 범위 안에서 추천되어야 합니다. 한식의 특성에 어긋나는 경우, 가이드라인에 따라 다른 대안을 제시해야 합니다.
 
-# --- [create_bedrock_payload 함수를 LangChain Helper로 대체] ---
+사용자가 요청할 때, 당신은 반드시, 반드시 아래에 제공된 <template> XML 구조를 완벽하게 따라야 합니다.
+<template> 태그 바깥에는 어떠한 인사말이나 잡담도 추가하지 마십시오.
 
+<guidelines>
+- [규칙 1] **[Mandatory] 재료 활용:** 사용자가 명시한 재료를 **최우선**으로 활용해야 합니다.
+
+- [규칙 2] **[Critical] 맛 검증 및 KB 활용:** 1. **(금지)** "말차 김치", "초콜릿 비빔밥", "민트초코 떡볶이"처럼 맛이 어울리지 않는 터무니없는 조합은 **절대** 제안하지 않습니다.
+  3. **(대안 제시)** 만약 KB에 사용자의 재료로 만들 수 있는 검증된 레시피가 없거나, 유일한 조합이 (1)에서 금지한 터무니없는 레시피일 경우, 원본 재료와 **유사한 재료**를 사용하는 **다른 한식 레시피**를 대안으로 추천하세요. (예: '민트초코'와 '떡볶이' 대신, '초콜릿'과 '떡'을 활용한 '초코 찰떡 파이'를 제안) 대안을 제안할 때도 <template>형식을 반드시 따라야 합니다.
+
+- [규칙 3] **[Priority] 검증된 퓨전:** '고추장 버터 불고기', '김치 치즈 파스타', '콘치즈 닭갈비'처럼 (맛이 검증된) 창의적인 퓨전 요리를 **우선적으로** 제안하세요.
+
+- [규칙 4] **[Format] 출력 형식:** 응답은 **반드시 한국어**로, 제공된 `<template>` XML 구조를 완벽하게 준수해야 합니다.
+
+- [규칙 5] **[Constraint] 잡담 금지:** `<template>` 태그 외부에 어떤 텍스트(인사, 설명 등)도 추가하지 마십시오.
+
+- [규칙 6] **[Format-Ingredients] 재료 형식:** <ingredients> 섹션의 모든 재료는 "재료명 (수량)" 형식을 엄격하게 따라야 합니다. (예: 간장 (2큰술))
+</guidelines>
+
+<template>
+<recipe>
+
+<title>
+[ 여기에 요리 제목을 적어주세요 ] (1인분 기준)
+</title>
+
+<section>
+<title>1. 재료 🥣</title>
+<ingredients>
+- [재료 1] ([수량 1, 예: 100g 또는 1큰술])
+- [재료 2] ([수량 2])
+- (모든 재료를 이 형식으로 나열)
+</ingredients>
+</section>
+
+<section>
+<title>2. 조리 방법 🍳 (총 예상 시간: [총 시간]분)</title>
+<steps>
+<step>
+<name>1) [단계 1 이름, 예: 재료 준비하기] (예상 시간: [소요 시간]분)</name>
+<description>
+- [이 단계의 상세한 설명 1]
+- [이 단계의 상세한 설명 2]
+</description>
+</step>
+<step>
+<name>2) [단계 2 이름, 예: 야채 볶기] (예상 시간: [소요 시간]분)</name>
+<description>
+- [이 단계의 상세한 설명 1]
+- [이 단계의 상세한 설명 2]
+</description>
+</step>
+<step>
+<name>3) [단계 3 이름, 예: 소스 넣고 끓이기] (예상 시간: [소요 시간]분)</name>
+<description>
+- [이 단계의 상세한 설명 1]
+</description>
+</step>
+</steps>
+</section>
+
+<section>
+<title>3. 곁들여 먹으면 좋은 음료 🥂</title>
+<recommendation>
+- [추천 음료 1, 예: 막걸리 또는 맥주]
+</recommendation>
+</section>
+
+<tip>
+<title>💡 셰프의 꿀팁</title>
+<content>
+- [이 요리를 더 쉽게 하거나 맛있게 만드는 비법 1]
+- [이 요리와 관련된 재미있는 사실 (선택 사항)]
+</content>
+</tip>
+
+</recipe>
+</template>"""
+
+def _parse_recipe_xml_for_preview(xml_string: str, language: str = "kor") -> Optional[ChatPreviewInfo]:
+    """Bedrock이 생성한 레시피 XML을 파싱하여 미리보기 정보를 추출."""
+    # ... (로직 생략, 기존과 동일) ...
+    try:
+        if '<recipe>' in xml_string:
+            xml_string = "<recipe>" + xml_string.split('<recipe>', 1)[1]
+        if '</recipe>' in xml_string:
+            xml_string = xml_string.split('</recipe>', 1)[0] + "</recipe>"
+            
+        root = ET.fromstring(xml_string)
+        is_english = language.lower() == "eng"
+        # ... (중략: 재료/시간 추출) ...
+        ingredients_list = []
+        if is_english:
+            ingredients_section = root.find(".//section[title='1. Ingredients 🥣']")
+        else:
+            ingredients_section = root.find(".//section[title='1. 재료 🥣']")
+        
+        if ingredients_section is not None:
+            ingredients_tag = ingredients_section.find('ingredients')
+            if ingredients_tag is not None and ingredients_tag.text:
+                ingredients_list = [
+                    line.strip() for line in ingredients_tag.text.strip().split('\n') 
+                    if line.strip()
+                ]
+
+        total_time = "정보 없음" if not is_english else "Information not available"
+        if is_english:
+            steps_section_title = root.find(".//section/title[starts-with(., '2. Cooking Method 🍳')]")
+            if steps_section_title is not None and steps_section_title.text:
+                match = re.search(r'\((Total estimated time:.*?)\)', steps_section_title.text)
+                if match:
+                    total_time = match.group(1)
+        else:
+            steps_section_title = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
+            if steps_section_title is not None and steps_section_title.text:
+                match = re.search(r'\((총 예상 시간:.*?)\)', steps_section_title.text)
+                if match:
+                    total_time = match.group(1)
+
+        return ChatPreviewInfo(
+            total_time=total_time,
+            ingredients=ingredients_list
+        )
+        
+    except Exception as e:
+        print(f"[XML 파싱 오류] {e}")
+        return None
+
+
+# 🔴 [수정 1] 함수 시그니처와 목적 변경
 def create_user_input_with_context(language: str, base_query: str, context_str: str) -> str:
-    """KB 컨텍스트가 포함된 최종 사용자 메시지를 생성"""
+    """KB 컨텍스트를 포함하여 모델이 레시피 생성에 참고할 수 있도록 최종 사용자 메시지를 생성"""
     if context_str:
         if language.lower() == "eng":
-            return f"""Here is some context. Use this to create the recipe:
+            return f"""Here is some context from the knowledge base. Use this information to create the recipe:
 <context>{context_str}</context>
 User Request: {base_query}"""
         else:
-            return f"""KB 참고 자료입니다:
+            return f"""Knowledge Base에서 검색된 참고 자료입니다. 이 정보를 활용해서 레시피를 만들어주세요:
 <context>{context_str}</context>
 사용자 요청: {base_query}"""
     return base_query
 
 
+# 🔴 [수정 2] get_chat_chain 함수 시그니처 수정 및 목적 명확화
 def get_chat_chain(language: str) -> RunnableSequence:
     """
-    LangChain Runnable 체인을 생성 (LangChain 통합의 핵심)
-    KB 검색 결과는 router.py에서 context_str로 이미 처리되었으므로,
-    이 체인은 단순하게 프롬프트와 LLM을 결합합니다.
+    LangChain Runnable 체인을 생성 (언어 설정 기반의 시스템 프롬프트 주입)
+    이 체인은 router.py로부터 KB 컨텍스트가 이미 포함된 최종 user_input을 받습니다.
     """
     
     # LangChain ChatPromptTemplate 정의
@@ -110,17 +326,18 @@ def get_chat_chain(language: str) -> RunnableSequence:
         [
             ("system", _get_system_prompt(language)), # 기존 시스템 프롬프트 재활용
             MessagesPlaceholder(variable_name="chat_history"), # Chat History를 위한 플레이스홀더
-            ("human", "{input}"),
+            ("human", "{input}"), # KB 컨텍스트가 포함된 최종 user_input을 받음
         ]
     )
     
-    # 🔴 LangChain 체인 구성
+    # LangChain 체인 구성
     return (
         {
-            # chat_history와 input은 router에서 LangChain 형식에 맞게 payload로 전달
-            "chat_history": lambda x: x["chat_history"],
-            "input": lambda x: x["input"],
+            # router.py에서 ChatRequest payload의 chat_history를 받음
+            "chat_history": lambda x: x["chat_history"], 
+            # router.py에서 최종 완성된 user_input 메시지를 받음
+            "input": lambda x: x["input"], 
         }
         | prompt
-        | llm # 🔴 전역 llm 객체 사용
+        | llm # 전역 llm 객체 사용
     )
