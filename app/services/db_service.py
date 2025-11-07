@@ -1,50 +1,75 @@
 import sqlite3
-import random
-from app.core.config import settings # config.py에서 DB 경로 가져오기
+from typing import List, Dict, Any
+from app.core.config import settings
 
 DB_PATH = settings.DB_PATH
-TABLE_NAME = "hot_recipes"
 
 def get_db_connection():
-    """DB 연결 객체 생성 (결과를 딕셔너리처럼 사용)"""
+    """DB 연결 객체를 생성 (결과를 dict처럼 사용)"""
     conn = sqlite3.connect(DB_PATH)
-    # 쿼리 결과를 '컬럼명'으로 접근할 수 있게 설정
+    # 쿼리 결과를 '컬럼명'으로 접근할 수 있게 설정 (Pydantic 변환에 필수)
     conn.row_factory = sqlite3.Row 
     return conn
 
-async def get_hot_recipes_from_db(k: int = 15):
-    """DB에서 상위 K개 레시피를 가져옴"""
+async def get_hot_recipes_from_db(limit: int = 15) -> List[Dict[str, Any]]:
+    """
+    (Reddit 랭킹) 'hot_recipes' 테이블에서 랜덤으로 4개 메뉴를 조회
+    """
+    print(f"DB: 'hot_recipes' 테이블에서 랜덤 4개 조회 중...")
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # score가 높은 순(DESC)으로 K개 가져오기
-        cursor.execute(f"SELECT recipe_name, score FROM {TABLE_NAME} ORDER BY score DESC LIMIT ?", (k,))
+        # ranking, name, score, ko, en, image_url 모두 조회 (랜덤 4개)
+        cursor.execute(
+            """
+            SELECT ranking, recipe_name, score, recipe_detail_ko, recipe_detail_en, image_url 
+            FROM hot_recipes 
+            ORDER BY RANDOM() 
+            LIMIT 4
+            """,
+        )
         recipes = cursor.fetchall()
         conn.close()
         
-        # sqlite3.Row 객체를 dict로 변환 (JSON으로 만들기 쉽게)
+        # sqlite3.Row 객체를 Pydantic이 읽을 수 있는 dict 리스트로 반환
         return [dict(row) for row in recipes]
         
     except sqlite3.OperationalError as e:
-        print(f"DB 오류: {e}. 'scripts/seed_sqlite.py'를 실행했는지 확인하세요.")
+        print(f"DB 오류: {e}. 'scripts/extract_hot_menus.py'를 실행했는지 확인하세요.")
         return [] # DB나 테이블이 없으면 빈 리스트 반환
 
-async def get_random_recommendations(total: int = 15, sample_size: int = 4):
+async def get_top_ingredients_from_db(limit: int = 10) -> List[Dict[str, Any]]:
     """
-    DB에서 상위 'total'개를 가져온 뒤, 'sample_size'만큼 랜덤으로 추천
+    (마트 랭킹) 'grocery_sales' 테이블에서 상위 10개 재료를 조회
     """
-    top_recipes = await get_hot_recipes_from_db(k=total)
-    
-    if not top_recipes:
-        return ["Kimchi Jjigae", "Bulgogi", "Bibimbap"] # DB가 비어있을 때 대비
-
-    # 레시피 이름만 추출
-    recipe_names = [recipe['recipe_name'] for recipe in top_recipes]
-    
-    # 만약 15개보다 적으면 그냥 다 반환
-    if len(recipe_names) <= sample_size:
-        return recipe_names
+    print(f"DB: 'grocery_sales' 테이블에서 Top {limit} 조회 중...")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-    # 15개 중에서 3~4개 랜덤 샘플링
-    return random.sample(recipe_names, sample_size)
+        # Rank, Name, Quantity 조회
+        cursor.execute(
+            """
+            SELECT IngredientRank, ProductName, TotalQuantity 
+            FROM grocery_sales 
+            ORDER BY IngredientRank ASC 
+            LIMIT 10
+            """,
+        )
+        ingredients = cursor.fetchall()
+        conn.close()
+        
+        # Pydantic 모델 ('TopIngredient')에 맞게 키 이름 변경
+        return [
+            {
+                "ranking": row["IngredientRank"],
+                "ingredient_name": row["ProductName"],
+                "total_quantity": row["TotalQuantity"]
+            } 
+            for row in ingredients
+        ]
+        
+    except sqlite3.OperationalError as e:
+        print(f"DB 오류: {e}. 'scripts/analyze_grocery_data.py'를 실행했는지 확인하세요.")
+        return []

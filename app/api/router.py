@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Body
-from app.schemas.recipe import ChatRequest, ChatResponse, RecipeRecommendation
+from typing import List
+from app.schemas.recipe import ChatRequest, ChatResponse, HotRecipe, TopIngredient
 from app.services import bedrock_service, db_service
 
 router = APIRouter()
 
-@router.post("/chat", response_model=ChatResponse, tags=["1. Bedrock 챗봇"])
+@router.post("/chat", response_model=ChatResponse, tags=["Top Ingredients"])
 async def handle_chat(request: ChatRequest):
     """
     (기능 1) Bedrock 챗봇 API
@@ -17,15 +18,20 @@ async def handle_chat(request: ChatRequest):
     
     return response
 
-
-@router.get("/recommend", response_model=RecipeRecommendation)
-async def get_hot_recommendations():
+@router.get("/hot-recipes", response_model=List[HotRecipe], tags=["Hot Recipes"])
+async def get_hot_recipes():
     """
     (기능 2) Hot K-Food 추천 API
-    DB(SQLite)에 저장된 Top 15 중 3~4개를 랜덤으로 추천
+    DB(SQLite)에 저장된 Top 15 메뉴 중 랜덤 4개를 조회
     """
-    recommendations = await db_service.get_random_recommendations(
-        total=15, 
-        sample_size=4 # 4개 추천
-    )
-    return RecipeRecommendation(recommendations=recommendations)
+    recipes = await db_service.get_hot_recipes_from_db(limit=15)
+    return recipes
+
+@router.get("/top-ingredients", response_model=List[TopIngredient], tags=["Top Ingredients"])
+async def get_top_ingredients():
+    """
+    (기능 3) Grocery 추천 API
+    DB(SQLite)에 저장된 Top 10 재료를 조회
+    """
+    ingredients = await db_service.get_top_ingredients_from_db(limit=10)
+    return ingredients

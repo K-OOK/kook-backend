@@ -11,9 +11,7 @@ try:
     bedrock_runtime = boto3.client(
         service_name="bedrock-runtime",
         region_name=settings.AWS_DEFAULT_REGION,
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
-    )
+    )   
     MODEL_ID = settings.BEDROCK_MODEL_ID
 except Exception as e:
     print(f"[Bedrock_Service] Boto3 클라이언트 초기화 실패: {e}")

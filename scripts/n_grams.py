@@ -7,8 +7,6 @@ from collections import Counter
 # [경로 수정] CSV 파일이 'data' 폴더 안에 있다고 가정
 CSV_FILE = 'data/reddit_koreanfood.csv'
 
-# extract_hot_menus.py에서 가져온 최종 불용어 리스트
-# (KFOOD_KEYWORDS_SET은 의도적으로 사용하지 않음 - "발견"이 목적)
 
 BASE_STOPWORDS_SET = {
     'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your',

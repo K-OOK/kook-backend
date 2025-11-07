@@ -71,6 +71,9 @@ def analyze_sales(data):
         ascending=False
     )
     
+    # IngredientRank 컬럼 추가 (1부터 시작하는 순위)
+    product_summary_sorted['IngredientRank'] = range(1, len(product_summary_sorted) + 1)
+    
     print("✅ (2/3) '상품별 판매량' 집계 완료.")
     print("\n--- [인사이트] 상품별 총 판매량 (Quantity) 기준 TOP 10 ---")
     print(product_summary_sorted.head(10))
