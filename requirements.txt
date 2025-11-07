@@ -1,0 +1,15 @@
+# FastAPI 
+fastapi
+uvicorn[standard]
+
+# Pydantic (환경 변수 로드용)
+pydantic-settings
+
+# AWS
+boto3
+
+# 데이터 분석 (DB 생성 스크립트용)
+pandas
+
+# Reddit
+praw
