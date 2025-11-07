@@ -290,7 +290,7 @@ def get_chat_chain(language: str) -> RunnableSequence:
     LangChain Runnable 체인을 생성 (언어 설정 기반의 시스템 프롬프트 주입)
     router.py로부터 KB 컨텍스트가 포함된 최종 user_input 받음
     """
-    LLM = get_fresh_llm(settings.AWS_DEFAULT_REGION, MODEL_ID)
+    llm = get_fresh_llm(settings.AWS_DEFAULT_REGION, settings.BEDROCK_MODEL_ID)
     
     # LangChain ChatPromptTemplate 정의
     prompt = ChatPromptTemplate.from_messages(
