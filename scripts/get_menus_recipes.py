@@ -26,7 +26,8 @@ DB_FILE = settings.DB_PATH # config에서 DB 경로 가져오기
 TABLE_NAME = 'hot_recipes'
 
 # Bedrock 템플릿 (bedrock_service.py에서 복사)
-SYSTEM_PROMPT_XML = """
+# 한국어 버전
+SYSTEM_PROMPT_XML_KO = """
 <template>
 <recipe>
 <title>[ 여기에 요리 제목을 적어주세요 ] (1인분 기준)</title>
@@ -53,9 +54,44 @@ SYSTEM_PROMPT_XML = """
 </template>
 """
 
-SYSTEM_PROMPT_HEADER = """
-당신은 "셰프 김"입니다. 사용자의 요청에 맞춰 K-Food 레시피를 생성합니다.
-반드시, 반드시 <template> XML 구조를 완벽하게 따라야 합니다.
+# 영어 버전
+SYSTEM_PROMPT_XML_EN = """
+<template>
+<recipe>
+<title>[ Write the dish title here ] (for 1 serving)</title>
+<section><title>1. Ingredients 🥣</title><ingredients>
+- [Ingredient 1] ([Quantity 1, e.g., 100g or 1 tablespoon])
+- [Ingredient 2] ([Quantity 2])
+</ingredients></section>
+<section><title>2. Cooking Method 🍳 (Total estimated time: [total time] minutes)</title><steps>
+<step><name>1) [Step 1 name, e.g., Prepare ingredients] (Estimated time: [time] minutes)</name><description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description></step>
+<step><name>2) [Step 2 name, e.g., Stir-fry vegetables] (Estimated time: [time] minutes)</name><description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description></step>
+<step><name>3) [Step 3 name, e.g., Add sauce and simmer] (Estimated time: [time] minutes)</name><description>
+- [Detailed description 1 for this step]
+</description></step>
+</steps></section>
+<section><title>3. Recommended Drinks 🥂</title><recommendation>
+- [Recommended drink 1, e.g., makgeolli or beer]
+</recommendation></section>
+<tip><title>💡 Chef's Tip</title><content>
+- [Tip 1 to make this dish easier or more delicious]
+- [Interesting fact about this dish (optional)]
+</content></tip>
+</recipe>
+</template>
+"""
+
+# 한국어 헤더
+SYSTEM_PROMPT_HEADER_KO = """당신은 "셰프 김(Chef Kim)"이라는 이름을 가진, 외국인에게 K-Food를 알려주는 전문 요리사입니다.
+당신의 임무는 사용자의 요청에 맞춰, K-Food 레시피를 **한국어**로, 그리고 **매우 명확하고 따라하기 쉬운 형식**으로 제공하는 것입니다.
+
+사용자가 요청할 때, 당신은 반드시, 반드시 아래에 제공된 <template> XML 구조를 완벽하게 따라야 합니다.
 <template> 태그 바깥에는 어떠한 인사말이나 잡담도 추가하지 마십시오.
 
 <guidelines>
@@ -64,6 +100,22 @@ SYSTEM_PROMPT_HEADER = """
 - [규칙 3] '고추장 버터 불고기', '김치 치즈 파스타', '콘치즈 닭갈비'처럼 (맛이 검증된) 창의적인 퓨전 요리를 우선적으로 제안하세요.
 - [규칙 4] 모든 응답은 **한국어**로, 그리고 반드시 아래의 <template> XML 구조를 완벽하게 따라야 합니다.
 - [규칙 5] <template> 태그 바깥에는 어떠한 인사말이나 잡담도 추가하지 마십시오.
+</guidelines>
+"""
+
+# 영어 헤더
+SYSTEM_PROMPT_HEADER_EN = """You are "Chef Kim", a professional chef who introduces K-Food to foreigners.
+Your mission is to provide K-Food recipes in **English** in a **very clear and easy-to-follow format** based on user requests.
+
+When users make requests, you must strictly follow the <template> XML structure provided below.
+Do not add any greetings or small talk outside the <template> tags.
+
+<guidelines>
+- [Rule 1] You must use the ingredients provided by the user.
+- [Rule 2] You must **never** suggest absurd recipes that don't taste good together, like "matcha kimchi", "chocolate bibimbap", or "mint chocolate tteokbokki".
+- [Rule 3] Prioritize creative fusion dishes with proven flavors like 'gochujang butter bulgogi', 'kimchi cheese pasta', or 'corn cheese dakgalbi'.
+- [Rule 4] All responses must be in **English** and must strictly follow the <template> XML structure below.
+- [Rule 5] Do not add any greetings or small talk outside the <template> tags.
 </guidelines>
 """
 
@@ -83,10 +135,10 @@ def get_recipe_from_bedrock(menu_name, language="Korean"):
     
     if language == "English":
         user_query = f"Provide a recipe for {menu_name}."
-        system_prompt = f"You are 'Chef Kim'. {SYSTEM_PROMPT_HEADER}\nRespond ONLY in English.\n{SYSTEM_PROMPT_XML}"
+        system_prompt = f"{SYSTEM_PROMPT_HEADER_EN}\n{SYSTEM_PROMPT_XML_EN}"
     else: # 기본값 (Korean)
         user_query = f"{menu_name} 레시피 알려줘."
-        system_prompt = f"You are 'Chef Kim'. {SYSTEM_PROMPT_HEADER}\nRespond ONLY in Korean.\n{SYSTEM_PROMPT_XML}"
+        system_prompt = f"{SYSTEM_PROMPT_HEADER_KO}\n{SYSTEM_PROMPT_XML_KO}"
 
     try:
         body = json.dumps({
@@ -158,6 +210,7 @@ def extract_cook_time_from_recipe(recipe_xml):
 
         time_minutes = next((m.group(1) for title in root.findall("./section/title") 
                      if title.text and (m := re.search(r'총 예상 시간:\s*(\d+)분', title.text))), None)
+        print(time_minutes)
         return int(time_minutes) if time_minutes else None
         
         # 한국어 버전: "2. 조리 방법 🍳 (총 예상 시간: 20분)"
