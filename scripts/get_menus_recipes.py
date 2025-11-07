@@ -208,26 +208,19 @@ def extract_cook_time_from_recipe(recipe_xml):
         # XML 문자열을 파싱
         root = ET.fromstring(recipe_xml)
 
-        time_minutes = next((m.group(1) for title in root.findall("./section/title") 
-                     if title.text and (m := re.search(r'총 예상 시간:\s*(\d+)분', title.text))), None)
-        print(time_minutes)
-        return int(time_minutes) if time_minutes else None
-        
-        # 한국어 버전: "2. 조리 방법 🍳 (총 예상 시간: 20분)"
-        steps_section_title_ko = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
-        if steps_section_title_ko is not None:
-            title_text = steps_section_title_ko.text
-            match = re.search(r'총 예상 시간:\s*(\d+)', title_text)
-            if match:
-                return int(match.group(1))
-        
-        # 영어 버전: "2. Cooking Method 🍳 (Total estimated time: 20 minutes)"
-        steps_section_title_en = root.find(".//section/title[starts-with(., '2. Cooking Method 🍳')]")
-        if steps_section_title_en is not None:
-            title_text = steps_section_title_en.text
-            match = re.search(r'Total Time:\s*(\d+)', title_text)
-            if match:
-                return int(match.group(1))
+        # 한국어 또는 영어 버전 모두 찾기
+        for title in root.findall("./section/title"):
+            if title.text:
+                # 한국어 버전: "총 예상 시간: XX분"
+                match_ko = re.search(r'총 예상 시간:\s*(\d+)분', title.text)
+                if match_ko:
+                    return int(match_ko.group(1))
+                
+                # 영어 버전: "Total estimated time: XX minutes" 또는 "Total Time: XX minutes"
+                match_en = re.search(r'Total estimated time:\s*(\d+)\s*minutes?', title.text) or \
+                          re.search(r'Total Time:\s*(\d+)\s*minutes?', title.text)
+                if match_en:
+                    return int(match_en.group(1))
         
         return None
     
