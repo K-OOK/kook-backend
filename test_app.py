@@ -14,12 +14,50 @@ from langchain_aws import AmazonKnowledgeBasesRetriever
 # --- [0] Streamlit 테스트를 위한 준비 ---
 
 # 커맨드라인 인자 파싱 (streamlit run test_app.py -- arg1 arg2 arg3 arg4 형태)
-# sys.argv에서 '--' 이후의 인자만 추출
+# Streamlit은 sys.argv를 다르게 처리할 수 있으므로 여러 방법 시도
+
+# 디버깅: sys.argv 전체 출력
+print(f"[디버깅] sys.argv 전체: {sys.argv}")
+print(f"[디버깅] sys.argv 길이: {len(sys.argv)}")
+print(f"[디버깅] __file__: {__file__}")
+
 APP_ARGS = []
+
+# 방법 1: '--' 구분자 사용
 if '--' in sys.argv:
     idx = sys.argv.index('--')
     APP_ARGS = sys.argv[idx + 1:]
-    print(f"[Streamlit] 커맨드라인 인자: {APP_ARGS}")
+    print(f"[Streamlit] 방법 1 - 커맨드라인 인자 (-- 이후): {APP_ARGS}")
+
+# 방법 2: 스크립트 파일명 이후의 인자 찾기
+if not APP_ARGS:
+    script_name = os.path.basename(__file__)
+    script_path = __file__
+    
+    # sys.argv에서 스크립트 경로나 이름 찾기
+    for i, arg in enumerate(sys.argv):
+        if script_name in arg or script_path in arg:
+            if i + 1 < len(sys.argv):
+                # '--' 이후의 인자만 가져오기
+                remaining = sys.argv[i + 1:]
+                if '--' in remaining:
+                    idx = remaining.index('--')
+                    APP_ARGS = remaining[idx + 1:]
+                else:
+                    APP_ARGS = remaining
+                print(f"[Streamlit] 방법 2 - 커맨드라인 인자 (스크립트 이후): {APP_ARGS}")
+                break
+
+# 방법 3: sys.argv[1:]에서 '--' 이후 찾기
+if not APP_ARGS and len(sys.argv) > 1:
+    remaining = sys.argv[1:]
+    if '--' in remaining:
+        idx = remaining.index('--')
+        APP_ARGS = remaining[idx + 1:]
+        print(f"[Streamlit] 방법 3 - 커맨드라인 인자: {APP_ARGS}")
+
+if not APP_ARGS:
+    print(f"[Streamlit] ⚠️ 커맨드라인 인자를 찾을 수 없습니다.")
 
 # 커맨드라인 인자 파싱 및 검증
 # arg1: language (kor/eng) - required
