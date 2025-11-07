@@ -12,7 +12,6 @@ import os
 import sys
 
 router = APIRouter()
-'
 @router.post("/chat/stream", tags=["Chat"])
 async def handle_chat_stream(
     payload: ChatRequest,
