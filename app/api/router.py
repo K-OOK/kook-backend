@@ -10,6 +10,9 @@ import boto3
 import json
 import os
 import sys
+from app.core.config import settings
+
+BEDROCK_MODEL_ID = settings.BEDROCK_MODEL_ID
 
 router = APIRouter()
 @router.post("/chat/stream", tags=["Chat"])
@@ -61,9 +64,13 @@ async def handle_chat_stream(
             context_str=context_str,
             model_id=BEDROCK_MODEL_ID
         )
+        model_id = payload_body.pop('model_id')
     except Exception as e:
+        error_message = f"Payload 생성 오류: {e}" 
+        
         async def error_stream():
-            yield f"<error>Payload 생성 오류: {e}</error>"
+            yield f"<error>{error_message}</error>" 
+            
         return StreamingResponse(error_stream(), media_type="text/plain")
         
     # --- 3. Bedrock 스트리밍 API 호출 ---
