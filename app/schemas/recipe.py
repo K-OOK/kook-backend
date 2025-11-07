@@ -31,6 +31,8 @@ class HotRecipe(BaseModel):
     recipe_detail_ko: Optional[str] = None
     recipe_detail_en: Optional[str] = None
     image_url: Optional[str] = None
+    cook_time: Optional[int] = None
+    description: Optional[str] = None
 
     class Config:
         orm_mode = True

@@ -23,7 +23,7 @@ async def get_hot_recipes_from_db(limit: int = 15) -> List[Dict[str, Any]]:
         # ranking, name, score, ko, en, image_url 모두 조회 (랜덤 4개)
         cursor.execute(
             """
-            SELECT ranking, recipe_name, score, recipe_detail_ko, recipe_detail_en, image_url 
+            SELECT ranking, recipe_name, image_url, cook_time, description
             FROM hot_recipes 
             ORDER BY RANDOM() 
             LIMIT 4
@@ -38,6 +38,33 @@ async def get_hot_recipes_from_db(limit: int = 15) -> List[Dict[str, Any]]:
     except sqlite3.OperationalError as e:
         print(f"DB 오류: {e}. 'scripts/extract_hot_menus.py'를 실행했는지 확인하세요.")
         return [] # DB나 테이블이 없으면 빈 리스트 반환
+
+async def get_hot_recipes_detail_from_db(ranking: int) -> Dict[str, Any]:
+    """
+    (기능 2) Hot K-Food 추천 API
+    DB(SQLite)에 저장된 메뉴의 디테일을 ranking을 통해 조회
+    """
+    print(f"DB: 'hot_recipes' 테이블에서 ranking {ranking} 메뉴 조회 중...")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # ranking, name, score, ko, en, image_url 모두 조회 (랜덤 4개)
+        cursor.execute(
+            """
+            SELECT ranking, recipe_name, image_url, cook_time, description
+            FROM hot_recipes 
+            WHERE ranking = ?
+            """,
+            (ranking,)
+        )
+        recipe = cursor.fetchone()  
+        conn.close()
+        return dict(recipe)
+
+    except sqlite3.OperationalError as e:
+        print(f"DB 오류: {e}. 'scripts/get_menus_recipes.py'를 실행했는지 확인하세요.")
+        return {}
 
 async def get_top_ingredients_from_db(limit: int = 10) -> List[Dict[str, Any]]:
     """
