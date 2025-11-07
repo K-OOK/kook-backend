@@ -2,6 +2,8 @@
 
 import boto3
 import json
+
+from langchain_core.language_models import LLM
 from app.core.config import settings
 from typing import Optional, List, Dict, Any
 import xml.etree.ElementTree as ET
@@ -17,19 +19,11 @@ from langchain_core.messages import HumanMessage, AIMessage # 메시지 타입
 
 # 설정 파일에서 AWS 정보 로드 (기존 코드 유지)
 try:
-    llm = ChatBedrock(
-        model_id=settings.BEDROCK_MODEL_ID,
-        region_name=settings.AWS_DEFAULT_REGION,
-        model_kwargs={
-            "max_tokens": 4096,
-            "temperature": 0.3,
-            "top_p": 0.7
-            }, 
-        streaming=True, 
-    )
     bedrock_runtime = None
+    llm = None
     MODEL_ID = settings.BEDROCK_MODEL_ID
     
+    # 🔴 [retriever]만 LangChain 객체로 유지 (토큰은 요청 시 갱신됨)
     KNOWLEDGE_BASE_ID = settings.KNOWLEDGE_BASE_ID
     if KNOWLEDGE_BASE_ID:
         retriever = AmazonKnowledgeBasesRetriever(
@@ -48,8 +42,20 @@ except Exception as e:
     MODEL_ID = None
     KNOWLEDGE_BASE_ID = None
 
+# 토큰 만료 방지를 위한 함수
+def get_fresh_llm(region: str, model_id: str):
+    """요청 시마다 새로운 LLM 객체를 생성하여 토큰 만료를 방지"""
+    return ChatBedrock(
+        model_id=model_id,
+        region_name=region,
+        model_kwargs={
+            "max_tokens": 4096, 
+            "temperature": 0.2, 
+            "top_p": 0.6
+        },
+        streaming=True,
+    )
 
-# --- [format_docs] 함수는 그대로 유지 ---
 def format_docs(docs):
     """KB 검색된 문서를 문자열로 변환하여 RAG 컨텍스트로 사용."""
     if not docs:
@@ -263,57 +269,6 @@ Do not add any greetings or small talk outside the <template> tags.
 </recipe>
 </template>"""
 
-def _parse_recipe_xml_for_preview(xml_string: str, language: str = "kor") -> Optional[ChatPreviewInfo]:
-    """Bedrock이 생성한 레시피 XML을 파싱하여 미리보기 정보를 추출."""
-    # ... (로직 생략, 기존과 동일) ...
-    try:
-        if '<recipe>' in xml_string:
-            xml_string = "<recipe>" + xml_string.split('<recipe>', 1)[1]
-        if '</recipe>' in xml_string:
-            xml_string = xml_string.split('</recipe>', 1)[0] + "</recipe>"
-            
-        root = ET.fromstring(xml_string)
-        is_english = language.lower() == "eng"
-        # ... (중략: 재료/시간 추출) ...
-        ingredients_list = []
-        if is_english:
-            ingredients_section = root.find(".//section[title='1. Ingredients 🥣']")
-        else:
-            ingredients_section = root.find(".//section[title='1. 재료 🥣']")
-        
-        if ingredients_section is not None:
-            ingredients_tag = ingredients_section.find('ingredients')
-            if ingredients_tag is not None and ingredients_tag.text:
-                ingredients_list = [
-                    line.strip() for line in ingredients_tag.text.strip().split('\n') 
-                    if line.strip()
-                ]
-
-        total_time = "정보 없음" if not is_english else "Information not available"
-        if is_english:
-            steps_section_title = root.find(".//section/title[starts-with(., '2. Cooking Method 🍳')]")
-            if steps_section_title is not None and steps_section_title.text:
-                match = re.search(r'\((Total estimated time:.*?)\)', steps_section_title.text)
-                if match:
-                    total_time = match.group(1)
-        else:
-            steps_section_title = root.find(".//section/title[starts-with(., '2. 조리 방법 🍳')]")
-            if steps_section_title is not None and steps_section_title.text:
-                match = re.search(r'\((총 예상 시간:.*?)\)', steps_section_title.text)
-                if match:
-                    total_time = match.group(1)
-
-        return ChatPreviewInfo(
-            total_time=total_time,
-            ingredients=ingredients_list
-        )
-        
-    except Exception as e:
-        print(f"[XML 파싱 오류] {e}")
-        return None
-
-
-# 🔴 [수정 1] 함수 시그니처와 목적 변경
 def create_user_input_with_context(language: str, base_query: str, context_str: str) -> str:
     """KB 컨텍스트를 포함하여 모델이 레시피 생성에 참고할 수 있도록 최종 사용자 메시지를 생성"""
     if context_str:
@@ -327,13 +282,12 @@ User Request: {base_query}"""
 사용자 요청: {base_query}"""
     return base_query
 
-
-# 🔴 [수정 2] get_chat_chain 함수 시그니처 수정 및 목적 명확화
 def get_chat_chain(language: str) -> RunnableSequence:
     """
     LangChain Runnable 체인을 생성 (언어 설정 기반의 시스템 프롬프트 주입)
-    이 체인은 router.py로부터 KB 컨텍스트가 이미 포함된 최종 user_input을 받습니다.
+    router.py로부터 KB 컨텍스트가 포함된 최종 user_input 받음
     """
+    LLM = get_fresh_llm(settings.AWS_DEFAULT_REGION, MODEL_ID)
     
     # LangChain ChatPromptTemplate 정의
     prompt = ChatPromptTemplate.from_messages(
