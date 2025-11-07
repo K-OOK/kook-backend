@@ -62,9 +62,7 @@ async def handle_chat_stream(
             ingredients=ingredients,
             chat_history=chat_history,
             context_str=context_str,
-            model_id=BEDROCK_MODEL_ID
         )
-        model_id = payload_body.pop('model_id')
     except Exception as e:
         error_message = f"Payload 생성 오류: {e}" 
         
@@ -77,7 +75,7 @@ async def handle_chat_stream(
     try:
         response_stream = await run_in_threadpool(
             bedrock_runtime.invoke_model_with_response_stream,
-            modelId=payload_body['model_id'], # bedrock_service에서 model_id가 payload에 포함된다고 가정
+            modelId=BEDROCK_MODEL_ID,
             body=json.dumps(payload_body)
         )
 
@@ -100,10 +98,10 @@ async def handle_chat_stream(
         return StreamingResponse(stream_generator(), media_type="text/plain")
 
     except Exception as e:
-        print(f"[Bedrock_Service] Bedrock API 호출 오류: {e}")
+        error_message = f"[Bedrock_Service] Bedrock API 호출 오류: {e}"
         async def error_stream():
-            yield f"<error>Bedrock API 호출 오류: {e}</error>"
-        return StreamingResponse(error_stream(), media_type="text/plain")
+            yield f"<error>{error_message}</error>" 
+        return StreamingResponse(error_stream(), media_type="text/plain")        
 
 @router.get("/hot-recipes", response_model=List[Dict[str, Any]], tags=["Hot Recipes"])
 async def get_hot_recipes():

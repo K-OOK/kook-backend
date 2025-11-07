@@ -297,7 +297,6 @@ User Request: {base_query}""" if is_english else f"""KB 참고 자료입니다:
         "system": system_prompt,
         "messages": messages,
         "stream": True,
-        "model_id": MODEL_ID # Model ID를 페이로드에 포함하여 router에서 사용
     }
 
     return body
