@@ -1,63 +1,24 @@
 # app/services/bedrock_service.py (LangChain 기반 최종 수정)
-
 import boto3
 import json
-
-from langchain_core.language_models import LLM
-from app.core.config import settings
-from typing import Optional, List, Dict, Any
+import os
+import asyncio
+from typing import Optional, List, Dict, Any, AsyncIterator # AsyncIterator 추가
 import xml.etree.ElementTree as ET
 import re
 from app.schemas.recipe import ChatPreviewInfo, ChatResponse
-
-# --- [수정 1] Boto3 대신 LangChain 객체 임포트 (기존 코드 유지) ---
 from langchain_aws import AmazonKnowledgeBasesRetriever, ChatBedrock
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableSequence # 체인 타입
-from langchain_core.messages import HumanMessage, AIMessage # 메시지 타입
-# ---------------------------
+from langchain_core.runnables import RunnableSequence
+from langchain_core.messages import HumanMessage, AIMessage
+from app.core.config import settings
 
-# 설정 파일에서 AWS 정보 로드 (기존 코드 유지)
-try:
-    bedrock_runtime = None
-    llm = None
-    MODEL_ID = settings.BEDROCK_MODEL_ID
-    
-    # 🔴 [retriever]만 LangChain 객체로 유지 (토큰은 요청 시 갱신됨)
-    KNOWLEDGE_BASE_ID = settings.KNOWLEDGE_BASE_ID
-
-except Exception as e:
-    print(f"[Bedrock_Service] LangChain LLM 또는 Retriever 초기화 실패: {e}")
-    bedrock_runtime = None
-    llm = None
-    retriever = None 
-    MODEL_ID = None
-    KNOWLEDGE_BASE_ID = None
-
-# 토큰 만료 방지를 위한 함수
-def get_fresh_llm(region: str, model_id: str):
-    """요청 시마다 새로운 LLM 객체를 생성하여 토큰 만료를 방지"""
-    return ChatBedrock(
-        model_id=model_id,
-        region_name=region,
-        model_kwargs={
-            "max_tokens": 4096, 
-            "temperature": 0.2, 
-            "top_p": 0.6
-        },
-        streaming=True,
-    )
-
-# 위의 llm과 비슷하게 토큰 만료 방지 위한 함수
-def get_fresh_retriever():
-    """요청 시마다 새로운 Retriever 객체를 생성하여 토큰 만료를 방지"""
-    if not KNOWLEDGE_BASE_ID:
-        return None
-    return AmazonKnowledgeBasesRetriever(
-        knowledge_base_id=KNOWLEDGE_BASE_ID,
-        retrieval_config={"vectorSearchConfiguration": {"numberOfResults": 5}},
-        region_name=settings.AWS_DEFAULT_REGION,
-    )
+# 🔴 [전역 객체] 토큰 만료 이슈 해결을 위해 모두 None으로 두고, 함수에서 새로 생성하도록 유도
+bedrock_runtime = None
+llm = None
+retriever = None 
+MODEL_ID = settings.BEDROCK_MODEL_ID
+KNOWLEDGE_BASE_ID = settings.KNOWLEDGE_BASE_ID
 
 def format_docs(docs):
     """KB 검색된 문서를 문자열로 변환하여 RAG 컨텍스트로 사용."""
@@ -284,6 +245,30 @@ Do not add any greetings or small talk outside the <template> tags.
 </recipe>
 </template>"""
 
+def get_fresh_llm():
+    """요청 시마다 새로운 LLM 객체를 생성하여 토큰 만료를 방지"""
+    # 🔴 [핵심] LLM 생성 시 boto3 클라이언트가 토큰을 갱신하도록 유도 (Cloud9 우회)
+    return ChatBedrock(
+        model_id=MODEL_ID,
+        region_name=settings.AWS_DEFAULT_REGION,
+        model_kwargs={
+            "max_tokens": 4096, 
+            "temperature": 0.2, 
+            "top_p": 0.6
+        },
+        streaming=True,
+    )
+
+def get_fresh_retriever():
+    """요청 시마다 새로운 Retriever 객체를 생성하여 토큰 만료를 방지"""
+    if not KNOWLEDGE_BASE_ID:
+        return None
+    return AmazonKnowledgeBasesRetriever(
+        knowledge_base_id=KNOWLEDGE_BASE_ID,
+        retrieval_config={"vectorSearchConfiguration": {"numberOfResults": 5}},
+        region_name=settings.AWS_DEFAULT_REGION,
+    )
+
 def create_user_input_with_context(language: str, base_query: str, context_str: str) -> str:
     """KB 컨텍스트를 포함하여 모델이 레시피 생성에 참고할 수 있도록 최종 사용자 메시지를 생성"""
     if context_str:
@@ -297,30 +282,76 @@ User Request: {base_query}"""
 사용자 요청: {base_query}"""
     return base_query
 
-def get_chat_chain(language: str) -> RunnableSequence:
+def get_chat_chain(language: str) -> Optional[RunnableSequence]:
     """
-    LangChain Runnable 체인을 생성 (언어 설정 기반의 시스템 프롬프트 주입)
-    router.py로부터 KB 컨텍스트가 포함된 최종 user_input 받음
+    LangChain Runnable 체인을 생성 (내부적으로 fresh LLM 객체 사용)
     """
-    llm = get_fresh_llm(settings.AWS_DEFAULT_REGION, settings.BEDROCK_MODEL_ID)
-    
-    # LangChain ChatPromptTemplate 정의
+    try:
+        fresh_llm = get_fresh_llm()
+    except Exception as e:
+        print(f"[ERROR] Fresh LLM 생성 실패: {e}")
+        return None
+
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", _get_system_prompt(language)), # 기존 시스템 프롬프트 재활용
-            MessagesPlaceholder(variable_name="chat_history"), # Chat History를 위한 플레이스홀더
-            ("human", "{input}"), # KB 컨텍스트가 포함된 최종 user_input을 받음
+            ("system", _get_system_prompt(language)),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
         ]
     )
     
-    # LangChain 체인 구성
     return (
         {
-            # router.py에서 ChatRequest payload의 chat_history를 받음
-            "chat_history": lambda x: x["chat_history"], 
-            # router.py에서 최종 완성된 user_input 메시지를 받음
-            "input": lambda x: x["input"], 
+            "chat_history": lambda x: x["chat_history"],
+            "input": lambda x: x["input"],
         }
         | prompt
-        | llm # 전역 llm 객체 사용
+        | fresh_llm
     )
+    
+# --- [개선된 코드: 자동 재시도 함수] ---
+async def stream_chat_with_auto_retry(
+    language: str, 
+    chat_history: List[Dict[str, str]], 
+    input_message: str
+) -> AsyncIterator[str]:
+    """
+    [핵심] LangChain 비동기 스트림을 실행하고 ExpiredTokenException 발생 시 자동 재시도
+    """
+    max_retries = 3
+    
+    # 🔴 [Chat History LangChain 타입 변환]
+    lc_chat_history = []
+    for msg in chat_history:
+        if msg['role'] == 'user':
+            lc_chat_history.append(HumanMessage(content=msg['content']))
+        elif msg['role'] == 'assistant':
+            lc_chat_history.append(AIMessage(content=msg['content']))
+            
+    for attempt in range(max_retries):
+        try:
+            # 1. 매번 새로운 체인 생성 (내부적으로 Fresh LLM 객체 포함)
+            chain = get_chat_chain(language)
+            
+            if not chain:
+                 raise RuntimeError("LangChain Chain object is None.")
+            
+            # 2. 비동기 스트리밍 실행
+            async for chunk in chain.astream({
+                "chat_history": lc_chat_history,
+                "input": input_message
+            }):
+                if hasattr(chunk, 'content') and chunk.content:
+                    yield chunk.content
+            return  # 성공 시 함수 종료
+            
+        except Exception as e:
+            error_str = str(e)
+            
+            if "ExpiredToken" in error_str and attempt < max_retries - 1:
+                print(f"토큰 만료, 재시도 중... ({attempt + 1}/{max_retries})")
+                await asyncio.sleep(1) # 1초 대기 후 재시도
+                continue
+            else:
+                # 최대 재시도 횟수를 넘었거나 다른 치명적 에러 발생
+                raise e
