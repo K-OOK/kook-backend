@@ -94,9 +94,59 @@ Do not add any greetings or small talk outside the <template> tags.
 <title>
 [ Write the dish title here ] (for 1 serving)
 </title>
-... (rest of the English template) ...
+
+<section>
+<title>1. Ingredients 🥣</title>
+<ingredients>
+- [Ingredient 1] ([Quantity 1, e.g., 100g or 1 tablespoon])
+- [Ingredient 2] ([Quantity 2])
+- (List all ingredients in this format)
+</ingredients>
+</section>
+
+<section>
+<title>2. Cooking Method 🍳 (Total estimated time: [total time] minutes)</title>
+<steps>
+<step>
+<name>1) [Step 1 name, e.g., Prepare ingredients] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description>
+</step>
+<step>
+<name>2) [Step 2 name, e.g., Stir-fry vegetables] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+- [Detailed description 2 for this step]
+</description>
+</step>
+<step>
+<name>3) [Step 3 name, e.g., Add sauce and simmer] (Estimated time: [time] minutes)</name>
+<description>
+- [Detailed description 1 for this step]
+</description>
+</step>
+</steps>
+</section>
+
+<section>
+<title>3. Recommended Drinks 🥂</title>
+<recommendation>
+- [Recommended drink 1, e.g., makgeolli or beer]
+</recommendation>
+</section>
+
+<tip>
+<title>💡 Chef's Tip</title>
+<content>
+- [Tip 1 to make this dish easier or more delicious]
+- [Interesting fact about this dish (optional)]
+</content>
+</tip>
+
+</recipe>
 </template>"""
-        pass
     else:
         return """당신은 "셰프 김(Chef Kim)"이라는 이름을 가진, 외국인에게 **K-Food(한식)**를 알려주는 전문 요리사입니다.
 당신의 임무는 사용자의 요청에 맞춰, K-Food 레시피를 **한국어**로, 그리고 **매우 명확하고 따라하기 쉬운 형식**으로 제공하는 것입니다.
@@ -136,7 +186,58 @@ Do not add any greetings or small talk outside the <template> tags.
 <title>
 [ 여기에 요리 제목을 적어주세요 ] (1인분 기준)
 </title>
-... (rest of the Korean template) ...
+
+<section>
+<title>1. 재료 🥣</title>
+<ingredients>
+- [재료 1] ([수량 1, 예: 100g 또는 1큰술])
+- [재료 2] ([수량 2])
+- (모든 재료를 이 형식으로 나열)
+</ingredients>
+</section>
+
+<section>
+<title>2. 조리 방법 🍳 (총 예상 시간: [총 시간]분)</title>
+<steps>
+<step>
+<name>1) [단계 1 이름, 예: 재료 준비하기] (예상 시간: [소요 시간]분)</name>
+<description>
+- [이 단계의 상세한 설명 1]
+- [이 단계의 상세한 설명 2]
+</description>
+</step>
+<step>
+<name>2) [단계 2 이름, 예: 야채 볶기] (예상 시간: [소요 시간]분)</name>
+<description>
+- [이 단계의 상세한 설명 1]
+- [이 단계의 상세한 설명 2]
+</description>
+</step>
+<step>
+<name>3) [단계 3 이름, 예: 소스 넣고 끓이기] (예상 시간: [소요 시간]분)</name>
+<description>
+- [이 단계의 상세한 설명 1]
+</description>
+</step>
+</steps>
+</section>
+
+<section>
+<title>3. 곁들여 먹으면 좋은 음료 🥂</title>
+<recommendation>
+- [추천 음료 1, 예: 막걸리 또는 맥주]
+</recommendation>
+</section>
+
+<tip>
+<title>💡 셰프의 꿀팁</title>
+<content>
+- [이 요리를 더 쉽게 하거나 맛있게 만드는 비법 1]
+- [이 요리와 관련된 재미있는 사실 (선택 사항)]
+</content>
+</tip>
+
+</recipe>
 </template>"""
 
 def get_fresh_llm():
