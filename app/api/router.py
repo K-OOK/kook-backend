@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.concurrency import run_in_threadpool
-from typing import List, Dict, Any, Optional, Iterator # Iterator 추가
+from typing import List, Dict, Any, Optional, Iterator, AsyncIterator # Iterator 추가
 import boto3
 import json
 from app.schemas.recipe import ChatRequest, ChatResponse, HotRecipe, TopIngredient
